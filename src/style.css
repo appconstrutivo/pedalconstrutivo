@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent: #0d9488;
+  --accent-hover: #0f766e;
+  --surface: #f8fafc;
+  --surface-card: #ffffff;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--surface);
+  color: var(--text);
+  font-family: "DM Sans", system-ui, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #recibo-print,
+  #recibo-print *,
+  #resumo-turno-print,
+  #resumo-turno-print *,
+  #relatorio-vendas-print,
+  #relatorio-vendas-print *,
+  #pedido-compra-print,
+  #pedido-compra-print * {
+    visibility: visible;
+  }
+  #recibo-print,
+  #resumo-turno-print,
+  #relatorio-vendas-print,
+  #pedido-compra-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+}
