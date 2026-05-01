@@ -1,5 +1,5 @@
 import { DATA_MODE } from '../config/dataMode'
-import { supabase } from '../lib/supabaseClient'
+import { supabase, SUPABASE_URL } from '../lib/supabaseClient'
 import { loadClientes } from '../store/clientes'
 import { loadFornecedores } from '../store/fornecedores'
 import { loadRegistrosMovimentacao } from '../store/historicoMovimentacao'
@@ -22,7 +22,8 @@ import {
   upsertTurnoCaixa,
 } from './pcApi'
 
-const MIGRATION_FLAG = 'pc:supabase-seeded-from-local:v1'
+/** Inclui a URL do projeto para re-seed ao apontar para outro Supabase (sem limpar o armazenamento local). */
+const migrationFlagKey = `pc:supabase-seeded-from-local:v1:${SUPABASE_URL ?? 'no-url'}`
 
 function enabled(): boolean {
   return DATA_MODE === 'supabase' && supabase !== null
@@ -161,20 +162,20 @@ export async function forceSyncLocalToSupabase(): Promise<void> {
 export async function ensureSupabaseSeededFromLocal(): Promise<void> {
   if (!enabled()) return
 
-  if (localStorage.getItem(MIGRATION_FLAG) === '1') return
+  if (localStorage.getItem(migrationFlagKey) === '1') return
   if (!localHasAnyData()) {
-    localStorage.setItem(MIGRATION_FLAG, '1')
+    localStorage.setItem(migrationFlagKey, '1')
     return
   }
 
   const hasAny = await supabaseHasAnyData()
   if (hasAny) {
-    localStorage.setItem(MIGRATION_FLAG, '1')
+    localStorage.setItem(migrationFlagKey, '1')
     return
   }
 
   await pushLocalToSupabase()
 
-  localStorage.setItem(MIGRATION_FLAG, '1')
+  localStorage.setItem(migrationFlagKey, '1')
 }
 

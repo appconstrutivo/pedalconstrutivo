@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ItemLancamentoVenda } from '../types'
 import { obterRegistroVendaPorDocumento } from '../store/historicoMovimentacao'
+import { DATA_MODE } from '../config/dataMode'
+import { supabase } from '../lib/supabaseClient'
+import { fetchVendaPorDocumentoFromSupabase } from '../supabase/historico'
 
 type Props = {
   aberto: boolean
@@ -11,6 +14,7 @@ type Props = {
 export function ModalSegundaViaRecibo({ aberto, onFechar, onAbrirRecibo }: Props) {
   const [numero, setNumero] = useState('')
   const [erro, setErro] = useState<string | null>(null)
+  const [carregando, setCarregando] = useState(false)
 
   useEffect(() => {
     if (!aberto) return
@@ -20,13 +24,25 @@ export function ModalSegundaViaRecibo({ aberto, onFechar, onAbrirRecibo }: Props
 
   const podeConfirmar = useMemo(() => numero.trim().length > 0, [numero])
 
-  function confirmar() {
+  async function confirmar() {
     const n = numero.trim()
     if (!n) return
 
-    const venda = obterRegistroVendaPorDocumento(n)
+    setCarregando(true)
+    setErro(null)
+
+    const vendaLocal = obterRegistroVendaPorDocumento(n)
+    const venda =
+      vendaLocal ??
+      ((DATA_MODE === 'supabase' && supabase !== null ? await fetchVendaPorDocumentoFromSupabase(n) : null) ?? null)
+
     if (!venda) {
-      setErro('Documento não encontrado no histórico local. Verifique o número e tente novamente.')
+      setErro(
+        DATA_MODE === 'supabase' && supabase !== null
+          ? 'Documento não encontrado no Supabase (ou foi cancelado). Verifique o número e tente novamente.'
+          : 'Documento não encontrado no histórico local. Verifique o número e tente novamente.',
+      )
+      setCarregando(false)
       return
     }
 
@@ -47,6 +63,7 @@ export function ModalSegundaViaRecibo({ aberto, onFechar, onAbrirRecibo }: Props
       itens,
     })
     onFechar()
+    setCarregando(false)
   }
 
   if (!aberto) return null
@@ -117,10 +134,10 @@ export function ModalSegundaViaRecibo({ aberto, onFechar, onAbrirRecibo }: Props
           <button
             type="button"
             onClick={confirmar}
-            disabled={!podeConfirmar}
+            disabled={!podeConfirmar || carregando}
             className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Gerar recibo
+            {carregando ? 'Buscando…' : 'Gerar recibo'}
           </button>
         </div>
       </div>

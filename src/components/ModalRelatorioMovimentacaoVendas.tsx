@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { DATA_MODE } from '../config/dataMode'
+import { supabase } from '../lib/supabaseClient'
 import { loadClientes } from '../store/clientes'
 import { loadProdutos } from '../store/produtos'
 import { loadTiposProduto } from '../store/tiposProduto'
 import { atualizarDataEmissaoPorDocumento, loadRegistrosMovimentacao } from '../store/historicoMovimentacao'
+import { fetchRegistrosMovimentacaoFromSupabase } from '../supabase/historico'
 import { formatarBrl } from '../utils/moeda'
 import {
   datasPorPreset,
@@ -48,6 +51,9 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
   const [listarPor, setListarPor] = useState<ListagemItensPor>('valor_vendido')
 
   const [paramsResultado, setParamsResultado] = useState<ParametrosRelatorioVendas | null>(null)
+  const [regsSupabase, setRegsSupabase] = useState<ReturnType<typeof loadRegistrosMovimentacao>>([])
+  const [carregandoSupabase, setCarregandoSupabase] = useState(false)
+  const [erroSupabase, setErroSupabase] = useState<string | null>(null)
 
   const clientes = useMemo(() => loadClientes().filter((c) => c.ativo !== false), [aberto])
   const produtos = useMemo(() => loadProdutos().filter((p) => p.ativo !== false), [aberto])
@@ -91,17 +97,39 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
     }
   }
 
-  function gerar() {
+  async function gerar() {
     const p = montarParametros()
     setParamsResultado(p)
     setEtapa('resultado')
+
+    const usarSupabase = DATA_MODE === 'supabase' && supabase !== null
+    if (!usarSupabase) {
+      setRegsSupabase([])
+      setErroSupabase(null)
+      return
+    }
+
+    try {
+      setCarregandoSupabase(true)
+      setErroSupabase(null)
+      const regs = await fetchRegistrosMovimentacaoFromSupabase({ dataInicioYYYYMMDD: p.dataInicio, dataFimYYYYMMDD: p.dataFim })
+      setRegsSupabase(regs)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setErroSupabase(msg || 'Falha ao consultar o Supabase.')
+      setRegsSupabase([])
+    } finally {
+      setCarregandoSupabase(false)
+    }
   }
 
   const linhas = useMemo(() => {
     if (!paramsResultado) return []
-    const regs = filtrarRegistros(loadRegistrosMovimentacao(), paramsResultado)
+    const usarSupabase = DATA_MODE === 'supabase' && supabase !== null
+    const base = usarSupabase ? regsSupabase : loadRegistrosMovimentacao()
+    const regs = filtrarRegistros(base, paramsResultado)
     return montarLinhasRelatorio(regs, paramsResultado)
-  }, [paramsResultado])
+  }, [paramsResultado, regsSupabase])
 
   const totais = useMemo(() => totaisRelatorio(linhas), [linhas])
 
@@ -151,7 +179,7 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
               Relatório GERAL de movimentação em VENDAS
             </h2>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              Filtros e visualização — dados locais (vendas e orçamentos registrados no dispositivo)
+              Filtros e visualização — {DATA_MODE === 'supabase' && supabase !== null ? 'dados do Supabase' : 'dados locais (do dispositivo)'}
             </p>
           </div>
           <button
@@ -483,6 +511,17 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
                 Imprimir
               </button>
             </div>
+
+            {carregandoSupabase && DATA_MODE === 'supabase' && supabase !== null && (
+              <div className="rounded-xl border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--text-muted)]">
+                Carregando movimentações do Supabase…
+              </div>
+            )}
+            {erroSupabase && DATA_MODE === 'supabase' && supabase !== null && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                Falha ao consultar o Supabase: {erroSupabase}
+              </div>
+            )}
 
             <div id="relatorio-vendas-print" className="rounded-xl border border-[var(--border)] bg-white overflow-x-auto">
               <div className="p-4 border-b border-[var(--border)] print:border-slate-300">
