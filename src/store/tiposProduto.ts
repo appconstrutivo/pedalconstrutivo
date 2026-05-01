@@ -1,21 +1,14 @@
 import type { TipoProduto } from '../types'
 import { deleteTipoProduto as sbDeleteTipoProduto, upsertTiposProduto as sbUpsertTiposProduto } from '../supabase/pcApi'
 
-const STORAGE_KEY = 'pedal-construtivo-tipos-produto'
+let tiposProdutoCache: TipoProduto[] = []
 
 export function loadTiposProduto(): TipoProduto[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as TipoProduto[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+  return tiposProdutoCache
 }
 
 export function saveTiposProduto(tipos: TipoProduto[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(tipos))
+  tiposProdutoCache = tipos
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'tipos-produto' } }))
 }
 

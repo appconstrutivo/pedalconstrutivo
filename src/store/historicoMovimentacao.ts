@@ -7,7 +7,13 @@ import type {
 } from '../types'
 import { upsertMovimentacao as sbUpsertMovimentacao } from '../supabase/pcApi'
 
-const STORAGE_KEY = 'pedal-construtivo.historico-movimentacao'
+/** Cache em memória — preenchido pela hidratação do Supabase. */
+let movimentacaoCache: RegistroMovimentacao[] = []
+
+export function replaceRegistrosMovimentacaoCache(lista: RegistroMovimentacao[]): void {
+  movimentacaoCache = lista
+  window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'historico-movimentacao' } }))
+}
 
 function validarDataYYYYMMDD(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s)
@@ -20,19 +26,7 @@ function trocarDataNoIso(iso: string, novaDataYYYYMMDD: string): string {
 }
 
 export function loadRegistrosMovimentacao(): RegistroMovimentacao[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown[]
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((r): r is RegistroMovimentacao => {
-      if (!r || typeof r !== 'object') return false
-      const k = (r as { kind?: string }).kind
-      return k === 'venda' || k === 'orcamento'
-    })
-  } catch {
-    return []
-  }
+  return movimentacaoCache
 }
 
 /** Busca um registro (venda/orçamento) pelo Nº do documento. */
@@ -52,7 +46,7 @@ export function obterRegistroVendaPorDocumento(numeroDocumento: string): Registr
 }
 
 function save(lista: RegistroMovimentacao[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(lista))
+  movimentacaoCache = lista
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'historico-movimentacao' } }))
 }
 
@@ -149,6 +143,7 @@ export function itensHistoricoParaPdv(itens: ItemMovimentacaoHistorico[]): ItemL
     codigoBarras: i.codigoBarras,
     quantidade: i.quantidade,
     precoUnitario: i.precoUnitario,
+    descontoPercentual: i.descontoPercentual ?? 0,
     subtotal: i.subtotal,
   }))
 }
@@ -166,6 +161,7 @@ export function itensParaHistorico(
       codigoBarras: i.codigoBarras,
       quantidade: i.quantidade,
       precoUnitario: i.precoUnitario,
+      descontoPercentual: i.descontoPercentual ?? 0,
       subtotal: i.subtotal,
       valorCustoUnitario: p?.valorCusto ?? 0,
       tipoProdutoId: p?.tipoProdutoId ?? '',

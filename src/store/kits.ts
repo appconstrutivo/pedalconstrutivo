@@ -1,49 +1,14 @@
 import type { Kit } from '../types'
 import { deleteKit as sbDeleteKit, upsertKits as sbUpsertKits } from '../supabase/pcApi'
 
-const STORAGE_KEY = 'pedal-construtivo-kits'
-
-function normalizarKit(row: unknown): Kit | null {
-  if (!row || typeof row !== 'object') return null
-  const r = row as Partial<Kit>
-  if (typeof r.id !== 'string') return null
-  if (typeof r.produtoKitId !== 'string') return null
-  if (typeof r.nome !== 'string') return null
-  if (!Array.isArray(r.itens)) return null
-  const criadoEm = typeof r.criadoEm === 'string' ? r.criadoEm : new Date().toISOString()
-  const estoqueComprometido = r.estoqueComprometido === true
-  const itens = r.itens
-    .filter((i): i is { produtoId: string; quantidade: number } => {
-      if (!i || typeof i !== 'object') return false
-      const o = i as { produtoId?: unknown; quantidade?: unknown }
-      return typeof o.produtoId === 'string' && typeof o.quantidade === 'number' && o.quantidade > 0
-    })
-    .map((i) => ({ produtoId: i.produtoId, quantidade: i.quantidade }))
-
-  return {
-    id: r.id,
-    produtoKitId: r.produtoKitId,
-    nome: r.nome,
-    itens,
-    estoqueComprometido,
-    criadoEm,
-  }
-}
+let kitsCache: Kit[] = []
 
 export function loadKits(): Kit[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown[]
-    if (!Array.isArray(parsed)) return []
-    return parsed.map(normalizarKit).filter((k): k is Kit => k !== null)
-  } catch {
-    return []
-  }
+  return kitsCache
 }
 
 export function saveKits(lista: Kit[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(lista))
+  kitsCache = lista
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'kits' } }))
 }
 

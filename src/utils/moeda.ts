@@ -10,6 +10,13 @@ export function round2(valor: number): number {
   return Math.round(n * 100) / 100
 }
 
+/** Subtotal da linha no PDV após desconto percentual sobre (qtd × unitário). */
+export function subtotalLinhaPdv(quantidade: number, precoUnitario: number, descontoPercentual: number): number {
+  const bruto = round2(quantidade * precoUnitario)
+  const pct = Math.min(100, Math.max(0, Number(descontoPercentual) || 0))
+  return round2(bruto * (1 - pct / 100))
+}
+
 export function percentualLucro(custo: number, venda: number): number {
   if (!Number.isFinite(custo) || !Number.isFinite(venda) || custo <= 0) return 0
   return ((venda - custo) / custo) * 100

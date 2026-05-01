@@ -184,6 +184,8 @@ export interface ItemLancamentoVenda {
   codigoBarras: string
   quantidade: number
   precoUnitario: number
+  /** Desconto percentual sobre o valor bruto da linha (qtd × unitário), intervalo 0–100. */
+  descontoPercentual: number
   subtotal: number
 }
 
@@ -209,6 +211,8 @@ export interface ItemMovimentacaoHistorico {
   codigoBarras: string
   quantidade: number
   precoUnitario: number
+  /** Desconto percentual aplicado na linha no PDV (opcional em registros antigos). */
+  descontoPercentual?: number
   subtotal: number
   valorCustoUnitario: number
   tipoProdutoId: string

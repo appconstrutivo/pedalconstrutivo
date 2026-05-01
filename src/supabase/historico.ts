@@ -26,6 +26,7 @@ type PcMovItemRow = {
   subtotal: number
   valor_custo_unitario: number
   tipo_produto_id: string | null
+  desconto_percentual?: number | null
 }
 
 function enabled(): boolean {
@@ -33,16 +34,24 @@ function enabled(): boolean {
 }
 
 function mapRegistro(m: PcMovRow, itens: PcMovItemRow[]): RegistroMovimentacao {
-  const itensMapped = itens.map((i) => ({
-    produtoId: i.produto_id,
-    descricao: i.descricao ?? '',
-    codigoBarras: i.codigo_barras ?? '',
-    quantidade: Number(i.quantidade) || 0,
-    precoUnitario: Number(i.preco_unitario) || 0,
-    subtotal: Number(i.subtotal) || 0,
-    valorCustoUnitario: Number(i.valor_custo_unitario) || 0,
-    tipoProdutoId: i.tipo_produto_id ?? '',
-  }))
+  const itensMapped = itens.map((i) => {
+    const dpct = i.desconto_percentual
+    const descontoPercentual =
+      dpct !== undefined && dpct !== null && Number.isFinite(Number(dpct))
+        ? Math.min(100, Math.max(0, Number(dpct)))
+        : undefined
+    const base = {
+      produtoId: i.produto_id,
+      descricao: i.descricao ?? '',
+      codigoBarras: i.codigo_barras ?? '',
+      quantidade: Number(i.quantidade) || 0,
+      precoUnitario: Number(i.preco_unitario) || 0,
+      subtotal: Number(i.subtotal) || 0,
+      valorCustoUnitario: Number(i.valor_custo_unitario) || 0,
+      tipoProdutoId: i.tipo_produto_id ?? '',
+    }
+    return descontoPercentual !== undefined ? { ...base, descontoPercentual } : base
+  })
 
   const base = {
     id: m.id,
@@ -136,5 +145,45 @@ export async function fetchVendaPorDocumentoFromSupabase(numeroDocumento: string
   if (reg.kind !== 'venda') return null
   if (reg.cancelamento?.canceladoEmIso) return null
   return reg
+}
+
+const MOV_PAGE = 800
+
+/** Lista todas as movimentações (vendas/orçamentos) paginando pelo Supabase. */
+export async function fetchTodasMovimentacoesSupabase(): Promise<RegistroMovimentacao[]> {
+  if (!enabled()) return []
+
+  const sb = supabase!
+  const movs: PcMovRow[] = []
+  let offset = 0
+  while (true) {
+    const movRes = await sb
+      .from('pc_movimentacoes')
+      .select('*')
+      .order('emitido_em', { ascending: false })
+      .range(offset, offset + MOV_PAGE - 1)
+    if (movRes.error) throw movRes.error
+    const chunk = (movRes.data ?? []) as PcMovRow[]
+    movs.push(...chunk)
+    if (chunk.length < MOV_PAGE) break
+    offset += MOV_PAGE
+  }
+
+  if (movs.length === 0) return []
+
+  const byMov = new Map<string, PcMovItemRow[]>()
+  const ids = movs.map((m) => m.id)
+  for (let i = 0; i < ids.length; i += MOV_PAGE) {
+    const slice = ids.slice(i, i + MOV_PAGE)
+    const itensRes = await sb.from('pc_movimentacao_itens').select('*').in('movimentacao_id', slice)
+    if (itensRes.error) throw itensRes.error
+    for (const it of (itensRes.data ?? []) as PcMovItemRow[]) {
+      const arr = byMov.get(it.movimentacao_id) ?? []
+      arr.push(it)
+      byMov.set(it.movimentacao_id, arr)
+    }
+  }
+
+  return movs.map((m) => mapRegistro(m, byMov.get(m.id) ?? []))
 }
 

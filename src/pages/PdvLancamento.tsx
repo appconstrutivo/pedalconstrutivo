@@ -13,7 +13,22 @@ import { baixarEstoquePorVenda, loadProdutos } from '../store/produtos'
 import { appendRegistroOrcamento, appendRegistroVenda, itensParaHistorico } from '../store/historicoMovimentacao'
 import { removeOrcamentoRascunho, upsertOrcamentoRascunho } from '../store/orcamentosRascunho'
 import { acumularVendaNoTurnoAtual } from '../store/turnoCaixa'
-import { formatarBrl } from '../utils/moeda'
+import { formatarBrl, subtotalLinhaPdv } from '../utils/moeda'
+
+function normalizarItensDoBootstrap(rows: ItemLancamentoVenda[]): ItemLancamentoVenda[] {
+  return rows.map((i) => {
+    const raw = i as ItemLancamentoVenda & { descontoPercentual?: number }
+    const desconto =
+      typeof raw.descontoPercentual === 'number' && Number.isFinite(raw.descontoPercentual)
+        ? Math.min(100, Math.max(0, raw.descontoPercentual))
+        : 0
+    return {
+      ...i,
+      descontoPercentual: desconto,
+      subtotal: subtotalLinhaPdv(i.quantidade, i.precoUnitario, desconto),
+    }
+  })
+}
 
 type Props = {
   modo: ModoLancamentoVenda
@@ -56,7 +71,9 @@ export function PdvLancamento({
   const [produtoActiveIdx, setProdutoActiveIdx] = useState(0)
   const [qtd, setQtd] = useState(1)
   const [precificacao, setPrecificacao] = useState<Precificacao>('varejo')
-  const [itens, setItens] = useState<ItemLancamentoVenda[]>(() => pdvSeed?.itens ?? [])
+  const [itens, setItens] = useState<ItemLancamentoVenda[]>(() =>
+    normalizarItensDoBootstrap(pdvSeed?.itens ?? []),
+  )
   const [destaqueId, setDestaqueId] = useState<string | null>(null)
   const [observacoesVenda, setObservacoesVenda] = useState(() => pdvSeed?.observacoes ?? '')
   const [rascunhoAtualId, setRascunhoAtualId] = useState<string | null>(() => pdvSeed?.rascunhoId ?? null)
@@ -108,7 +125,6 @@ export function PdvLancamento({
   function adicionar() {
     if (!produtoSelecionado || qtd < 1) return
     const pu = precoPorModo(produtoSelecionado, precificacao)
-    const sub = Math.round(pu * qtd * 100) / 100
     const linha: ItemLancamentoVenda = {
       id: crypto.randomUUID(),
       produtoId: produtoSelecionado.id,
@@ -116,7 +132,8 @@ export function PdvLancamento({
       codigoBarras: produtoSelecionado.codigoBarras,
       quantidade: qtd,
       precoUnitario: pu,
-      subtotal: sub,
+      descontoPercentual: 0,
+      subtotal: subtotalLinhaPdv(qtd, pu, 0),
     }
     setItens((prev) => [...prev, linha])
     setDestaqueId(linha.id)
@@ -133,6 +150,23 @@ export function PdvLancamento({
   function remover(id: string) {
     setItens((prev) => prev.filter((i) => i.id !== id))
     setDestaqueId((d) => (d === id ? null : d))
+  }
+
+  function atualizarDescontoItem(id: string, valorTexto: string) {
+    const normalizado = valorTexto.trim().replace(',', '.')
+    const parsed = parseFloat(normalizado)
+    const pct = Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : 0
+    setItens((prev) =>
+      prev.map((i) =>
+        i.id === id
+          ? {
+              ...i,
+              descontoPercentual: pct,
+              subtotal: subtotalLinhaPdv(i.quantidade, i.precoUnitario, pct),
+            }
+          : i,
+      ),
+    )
   }
 
   function salvarRascunhoOrcamento() {
@@ -233,7 +267,7 @@ export function PdvLancamento({
   return (
     <div className="min-h-screen flex flex-col bg-[var(--surface)]">
       <header className="border-b border-[var(--border)] bg-[var(--surface-card)] sticky top-0 z-10 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
               Lançamento de pedidos · {modo === 'orcamento' ? 'Orçamento' : 'Venda'}
@@ -249,7 +283,7 @@ export function PdvLancamento({
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4 sm:p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-[var(--text)] mb-3">Informações da venda</h2>
           <p className="text-sm text-[var(--text)]">
@@ -432,7 +466,11 @@ export function PdvLancamento({
               <div>
                 <span className="text-[var(--text-muted)]">Cálculo</span>
                 <p className="font-semibold text-[var(--accent)]">
-                  {formatarBrl(destaque.precoUnitario)} × {destaque.quantidade} = {formatarBrl(destaque.subtotal)}
+                  {formatarBrl(destaque.precoUnitario)} × {destaque.quantidade}
+                  {destaque.descontoPercentual > 0
+                    ? ` · desc. ${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(destaque.descontoPercentual)}%`
+                    : ''}{' '}
+                  = {formatarBrl(destaque.subtotal)}
                 </p>
               </div>
             </div>
@@ -444,20 +482,23 @@ export function PdvLancamento({
             Produtos na venda
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[640px]">
+            <table className="w-full text-sm min-w-[760px]">
               <thead>
                 <tr className="bg-[var(--surface)] text-left text-xs text-[var(--text-muted)] border-b border-[var(--border)]">
                   <th className="px-3 py-2">Descrição</th>
-                  <th className="px-3 py-2 text-right">Qtd</th>
-                  <th className="px-3 py-2 text-right">Unit.</th>
-                  <th className="px-3 py-2 text-right">Subtotal</th>
-                  <th className="px-3 py-2 w-24">Ações</th>
+                  <th className="px-3 py-2 text-right whitespace-nowrap">Qtd</th>
+                  <th className="px-3 py-2 text-right whitespace-nowrap">Unit.</th>
+                  <th className="px-3 py-2 text-right whitespace-nowrap">
+                    Desc. <span className="font-normal normal-case text-[10px]">(%)</span>
+                  </th>
+                  <th className="px-3 py-2 text-right whitespace-nowrap">Subtotal</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {itens.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-[var(--text-muted)]">
+                    <td colSpan={6} className="px-4 py-10 text-center text-[var(--text-muted)]">
                       Nenhum item. Selecione um produto acima.
                     </td>
                   </tr>
@@ -472,11 +513,31 @@ export function PdvLancamento({
                         }`}
                         onClick={() => setDestaqueId(it.id)}
                       >
-                        <td className="px-3 py-3 font-medium">{it.descricao}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{it.quantidade}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatarBrl(it.precoUnitario)}</td>
-                        <td className="px-3 py-3 text-right font-medium tabular-nums">{formatarBrl(it.subtotal)}</td>
-                        <td className="px-3 py-3">
+                        <td className="px-3 py-3 font-medium align-middle">{it.descricao}</td>
+                        <td className="px-3 py-3 text-right tabular-nums align-middle">{it.quantidade}</td>
+                        <td className="px-3 py-3 text-right tabular-nums align-middle">
+                          {formatarBrl(it.precoUnitario)}
+                        </td>
+                        <td className="px-3 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex justify-end">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              min={0}
+                              max={100}
+                              step={0.01}
+                              title="Desconto percentual sobre o valor da linha (quantidade × unitário)"
+                              aria-label={`Desconto percentual em ${it.descricao}`}
+                              value={it.descontoPercentual}
+                              onChange={(e) => atualizarDescontoItem(it.id, e.target.value)}
+                              className="w-full max-w-[5.5rem] rounded-lg border border-[var(--border)] bg-white px-2 py-1.5 text-sm text-right tabular-nums"
+                            />
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-right font-medium tabular-nums align-middle">
+                          {formatarBrl(it.subtotal)}
+                        </td>
+                        <td className="px-3 py-3 align-middle">
                           <button
                             type="button"
                             onClick={(e) => {

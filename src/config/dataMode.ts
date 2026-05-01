@@ -1,8 +1,6 @@
 /**
- * Origem dos dados da aplicação.
- * Hoje: apenas armazenamento local (localStorage / futuro IndexedDB).
- * Próximo passo: trocar para `supabase` quando a camada de API estiver pronta.
+ * Origem dos dados: apenas Supabase (`src/supabase/*`) + caches em memória na sessão.
  */
-export type DataMode = 'local' | 'supabase'
+export type DataMode = 'supabase'
 
 export const DATA_MODE: DataMode = 'supabase'

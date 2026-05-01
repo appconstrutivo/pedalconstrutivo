@@ -1,8 +1,5 @@
 import type { ItemLancamentoVenda } from '../types'
 import { deleteOrcamentoRascunho as sbDeleteOrcamentoRascunho, upsertOrcamentoRascunho as sbUpsertOrcamentoRascunho } from '../supabase/pcApi'
-
-const STORAGE_KEY = 'pedal-construtivo.orcamentos-rascunho'
-
 export type OrcamentoRascunho = {
   id: string
   criadoEmIso: string
@@ -13,55 +10,19 @@ export type OrcamentoRascunho = {
   itens: ItemLancamentoVenda[]
 }
 
-function normalizarItem(row: unknown): ItemLancamentoVenda | null {
-  if (!row || typeof row !== 'object') return null
-  const r = row as Record<string, unknown>
-  if (typeof r.produtoId !== 'string' || typeof r.descricao !== 'string') return null
-  return {
-    id: typeof r.id === 'string' ? r.id : crypto.randomUUID(),
-    produtoId: r.produtoId,
-    descricao: r.descricao,
-    codigoBarras: typeof r.codigoBarras === 'string' ? r.codigoBarras : '',
-    quantidade: typeof r.quantidade === 'number' ? r.quantidade : 0,
-    precoUnitario: typeof r.precoUnitario === 'number' ? r.precoUnitario : 0,
-    subtotal: typeof r.subtotal === 'number' ? r.subtotal : 0,
-  }
-}
+let orcamentosRascunhoCache: OrcamentoRascunho[] = []
 
-function normalizarRascunho(row: unknown): OrcamentoRascunho | null {
-  if (!row || typeof row !== 'object') return null
-  const r = row as Record<string, unknown>
-  if (typeof r.id !== 'string') return null
-  const itensRaw = r.itens
-  const itens = Array.isArray(itensRaw)
-    ? itensRaw.map(normalizarItem).filter((x): x is ItemLancamentoVenda => x !== null)
-    : []
-  const agora = new Date().toISOString()
-  return {
-    id: r.id,
-    criadoEmIso: typeof r.criadoEmIso === 'string' ? r.criadoEmIso : agora,
-    atualizadoEmIso: typeof r.atualizadoEmIso === 'string' ? r.atualizadoEmIso : agora,
-    clienteId: typeof r.clienteId === 'string' ? r.clienteId : null,
-    clienteNome: typeof r.clienteNome === 'string' ? r.clienteNome : null,
-    observacoes: typeof r.observacoes === 'string' ? r.observacoes : '',
-    itens,
-  }
+export function replaceOrcamentosRascunhoCache(lista: OrcamentoRascunho[]): void {
+  orcamentosRascunhoCache = lista
+  window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'orcamentos-rascunho' } }))
 }
 
 export function loadOrcamentosRascunho(): OrcamentoRascunho[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown[]
-    if (!Array.isArray(parsed)) return []
-    return parsed.map(normalizarRascunho).filter((x): x is OrcamentoRascunho => x !== null)
-  } catch {
-    return []
-  }
+  return orcamentosRascunhoCache
 }
 
 function saveTodos(lista: OrcamentoRascunho[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(lista))
+  orcamentosRascunhoCache = lista
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'orcamentos-rascunho' } }))
 }
 

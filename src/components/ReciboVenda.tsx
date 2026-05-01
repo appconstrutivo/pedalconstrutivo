@@ -107,6 +107,7 @@ export function ReciboVenda({
                   <th className="py-1.5 pr-2 font-medium">Descrição</th>
                   <th className="py-1.5 px-1 text-right font-medium w-10">Qtd</th>
                   <th className="py-1.5 px-1 text-right font-medium">Unit.</th>
+                  <th className="py-1.5 px-1 text-right font-medium whitespace-nowrap">Desc.%</th>
                   <th className="py-1.5 pl-1 text-right font-medium">Total</th>
                 </tr>
               </thead>
@@ -116,6 +117,11 @@ export function ReciboVenda({
                     <td className="py-2 pr-2 align-top text-slate-800">{it.descricao}</td>
                     <td className="py-2 px-1 text-right tabular-nums text-slate-700">{it.quantidade}</td>
                     <td className="py-2 px-1 text-right tabular-nums text-slate-600">{formatarBrl(it.precoUnitario)}</td>
+                    <td className="py-2 px-1 text-right tabular-nums text-slate-600">
+                      {(it.descontoPercentual ?? 0) > 0
+                        ? `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(it.descontoPercentual ?? 0)}%`
+                        : '—'}
+                    </td>
                     <td className="py-2 pl-1 text-right tabular-nums font-medium text-slate-900">
                       {formatarBrl(it.subtotal)}
                     </td>

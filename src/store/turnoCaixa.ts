@@ -2,11 +2,26 @@ import type { AberturaTurnoCaixa, DadosPagamentoVenda, FechamentoTurnoCaixa } fr
 import { round2 } from '../utils/moeda'
 import { upsertTurnoCaixa as sbUpsertTurnoCaixa } from '../supabase/pcApi'
 
-const STORAGE_KEY = 'pedal-construtivo.turno-caixa-dia'
-const ACUM_KEY = 'pedal-construtivo.turno-vendas-acumulado'
-const PROXIMO_CAIXA_KEY = 'pedal-construtivo.proximo-caixa-sugerido'
-const ULTIMO_FECHAMENTO_KEY = 'pedal-construtivo.ultimo-fechamento-turno'
-const HISTORICO_TURNOS_KEY = 'pedal-construtivo.turnos-caixa-historico'
+/** Linha `pc_turnos_caixa` — usada na hidratação. */
+export type TurnoCaixaSbRow = {
+  data_referencia: string
+  aberto_em: string
+  fechado_em: string | null
+  saldo_abertura: number
+  dinheiro: number
+  pix: number
+  cartao: number
+  boleto: number
+  total_vendas: number
+  proximo_caixa: number
+  operador: string | null
+}
+
+let historicoTurnosCache: TurnoCaixaHistoricoRow[] = []
+let aberturaTurnoCache: AberturaTurnoCaixa | null = null
+let acumuladoCache: AcumuladoVendasTurno | null = null
+let ultimoFechamentoCache: FechamentoTurnoCaixa | null = null
+let proximoCaixaSugeridoCache: number | null = null
 
 /** Data local no formato YYYY-MM-DD (fuso do navegador). */
 export function dataLocalHoje(): string {
@@ -39,41 +54,85 @@ export type TurnoCaixaHistoricoRow = {
   operador: string
 }
 
-export function loadHistoricoTurnosCaixa(): TurnoCaixaHistoricoRow[] {
-  try {
-    const raw = localStorage.getItem(HISTORICO_TURNOS_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown[]
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter((x): x is TurnoCaixaHistoricoRow => {
-        if (!x || typeof x !== 'object') return false
-        const r = x as Record<string, unknown>
-        return typeof r.dataReferencia === 'string' && typeof r.abertoEmIso === 'string'
-      })
-      .map((r) => {
-        const o = r as unknown as TurnoCaixaHistoricoRow
-        return {
-          dataReferencia: o.dataReferencia,
-          abertoEmIso: o.abertoEmIso,
-          fechadoEmIso: typeof o.fechadoEmIso === 'string' ? o.fechadoEmIso : null,
-          saldoAbertura: round2(Number(o.saldoAbertura) || 0),
-          dinheiro: round2(Number(o.dinheiro) || 0),
-          pix: round2(Number(o.pix) || 0),
-          cartao: round2(Number(o.cartao) || 0),
-          boleto: round2(Number(o.boleto) || 0),
-          totalVendas: round2(Number(o.totalVendas) || 0),
-          proximoCaixa: round2(Number(o.proximoCaixa) || 0),
-          operador: typeof o.operador === 'string' && o.operador ? o.operador : 'Administrador',
-        }
-      })
-  } catch {
-    return []
+function mapSbRowToHistorico(r: TurnoCaixaSbRow): TurnoCaixaHistoricoRow {
+  return {
+    dataReferencia: r.data_referencia,
+    abertoEmIso: r.aberto_em,
+    fechadoEmIso: r.fechado_em,
+    saldoAbertura: round2(Number(r.saldo_abertura) || 0),
+    dinheiro: round2(Number(r.dinheiro) || 0),
+    pix: round2(Number(r.pix) || 0),
+    cartao: round2(Number(r.cartao) || 0),
+    boleto: round2(Number(r.boleto) || 0),
+    totalVendas: round2(Number(r.total_vendas) || 0),
+    proximoCaixa: round2(Number(r.proximo_caixa) || 0),
+    operador: typeof r.operador === 'string' && r.operador ? r.operador : 'Administrador',
   }
 }
 
+function mapSbRowToFechamento(r: TurnoCaixaSbRow): FechamentoTurnoCaixa {
+  const h = mapSbRowToHistorico(r)
+  return {
+    dataReferencia: h.dataReferencia,
+    abertoEmIso: h.abertoEmIso,
+    fechadoEmIso: h.fechadoEmIso ?? new Date().toISOString(),
+    saldoAbertura: h.saldoAbertura,
+    dinheiro: h.dinheiro,
+    pix: h.pix,
+    cartao: h.cartao,
+    boleto: h.boleto,
+    totalVendas: h.totalVendas,
+    proximoCaixa: h.proximoCaixa,
+    operador: h.operador,
+  }
+}
+
+/** Reconstrói o estado do caixa a partir do Supabase. */
+export function aplicarHidratacaoTurnosCaixa(rowsSb: TurnoCaixaSbRow[]): void {
+  historicoTurnosCache = rowsSb.map(mapSbRowToHistorico).sort((a, b) => a.dataReferencia.localeCompare(b.dataReferencia))
+
+  const hoje = dataLocalHoje()
+  const todayRow = rowsSb.find((r) => r.data_referencia === hoje)
+
+  if (todayRow && !todayRow.fechado_em) {
+    aberturaTurnoCache = {
+      dataReferencia: hoje,
+      abertoEmIso: todayRow.aberto_em,
+      saldoAbertura: round2(Number(todayRow.saldo_abertura) || 0),
+    }
+    acumuladoCache = {
+      dataReferencia: hoje,
+      dinheiro: round2(Number(todayRow.dinheiro) || 0),
+      pix: round2(Number(todayRow.pix) || 0),
+      cartao: round2(Number(todayRow.cartao) || 0),
+      boleto: round2(Number(todayRow.boleto) || 0),
+    }
+  } else {
+    aberturaTurnoCache = null
+    acumuladoCache = null
+  }
+
+  const fechadas = rowsSb
+    .filter((r) => r.fechado_em)
+    .sort((a, b) => String(b.fechado_em!).localeCompare(String(a.fechado_em!)))
+  if (fechadas.length) {
+    const r = fechadas[0]
+    ultimoFechamentoCache = mapSbRowToFechamento(r)
+    proximoCaixaSugeridoCache = round2(Number(r.proximo_caixa) || 0)
+  } else {
+    ultimoFechamentoCache = null
+    proximoCaixaSugeridoCache = null
+  }
+
+  window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'turno-caixa' } }))
+}
+
+export function loadHistoricoTurnosCaixa(): TurnoCaixaHistoricoRow[] {
+  return [...historicoTurnosCache].sort((a, b) => a.dataReferencia.localeCompare(b.dataReferencia))
+}
+
 function saveHistoricoTurnosCaixa(rows: TurnoCaixaHistoricoRow[]): void {
-  localStorage.setItem(HISTORICO_TURNOS_KEY, JSON.stringify(rows))
+  historicoTurnosCache = [...rows].sort((a, b) => a.dataReferencia.localeCompare(b.dataReferencia))
 }
 
 function upsertHistoricoTurno(row: TurnoCaixaHistoricoRow): void {
@@ -82,35 +141,50 @@ function upsertHistoricoTurno(row: TurnoCaixaHistoricoRow): void {
   const next = [...lista]
   if (idx >= 0) next[idx] = row
   else next.push(row)
-  // Mantém ordenado por data para facilitar depuração.
   next.sort((a, b) => a.dataReferencia.localeCompare(b.dataReferencia))
   saveHistoricoTurnosCaixa(next)
 }
 
 function loadAcumulado(): AcumuladoVendasTurno | null {
-  try {
-    const raw = localStorage.getItem(ACUM_KEY)
-    if (!raw) return null
-    const j = JSON.parse(raw) as AcumuladoVendasTurno
-    if (!j.dataReferencia) return null
-    return {
-      dataReferencia: j.dataReferencia,
-      dinheiro: round2(Number(j.dinheiro) || 0),
-      pix: round2(Number(j.pix) || 0),
-      cartao: round2(Number(j.cartao) || 0),
-      boleto: round2(Number(j.boleto) || 0),
-    }
-  } catch {
-    return null
-  }
+  return acumuladoCache
 }
 
 function saveAcumulado(a: AcumuladoVendasTurno): void {
-  localStorage.setItem(ACUM_KEY, JSON.stringify(a))
+  acumuladoCache = { ...a }
 }
 
 function limparAcumulado(): void {
-  localStorage.removeItem(ACUM_KEY)
+  acumuladoCache = null
+}
+
+/** Mantém `pc_turnos_caixa` alinhado ao acúmulo do turno aberto (várias estações / reload). */
+function persistirTurnoAbertoRemoto(): void {
+  const ab = obterAberturaTurnoHoje()
+  if (!ab) return
+  const acum =
+    loadAcumulado() ??
+    ({
+      dataReferencia: ab.dataReferencia,
+      dinheiro: 0,
+      pix: 0,
+      cartao: 0,
+      boleto: 0,
+    } satisfies AcumuladoVendasTurno)
+  const histRow = historicoTurnosCache.find((x) => x.dataReferencia === ab.dataReferencia)
+  const totalVendas = round2(acum.dinheiro + acum.pix + acum.cartao + acum.boleto)
+  void sbUpsertTurnoCaixa({
+    dataReferencia: ab.dataReferencia,
+    abertoEmIso: ab.abertoEmIso,
+    saldoAbertura: ab.saldoAbertura,
+    fechadoEmIso: histRow?.fechadoEmIso ?? null,
+    dinheiro: acum.dinheiro,
+    pix: acum.pix,
+    cartao: acum.cartao,
+    boleto: acum.boleto,
+    totalVendas,
+    proximoCaixa: histRow?.proximoCaixa ?? 0,
+    operador: histRow?.operador ?? 'Administrador',
+  })
 }
 
 /** Zera acúmulo para o dia (chamado na abertura de turno). */
@@ -125,16 +199,9 @@ export function resetAcumuladoVendasTurno(dataReferencia: string): void {
 }
 
 export function obterAberturaTurnoHoje(): AberturaTurnoCaixa | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    const j = JSON.parse(raw) as AberturaTurnoCaixa
-    if (!j.dataReferencia || j.dataReferencia !== dataLocalHoje()) return null
-    if (typeof j.saldoAbertura !== 'number' || !j.abertoEmIso) return null
-    return j
-  } catch {
-    return null
-  }
+  if (!aberturaTurnoCache || aberturaTurnoCache.dataReferencia !== dataLocalHoje()) return null
+  if (typeof aberturaTurnoCache.saldoAbertura !== 'number' || !aberturaTurnoCache.abertoEmIso) return null
+  return aberturaTurnoCache
 }
 
 export function turnoJaAbertoNoDiaCorrente(): boolean {
@@ -172,6 +239,7 @@ export function acumularVendaNoTurnoAtual(d: DadosPagamentoVenda): void {
   cur.cartao = round2(cur.cartao + d.cartao)
   cur.boleto = round2(cur.boleto + d.boleto)
   saveAcumulado(cur)
+  persistirTurnoAbertoRemoto()
 }
 
 /**
@@ -189,6 +257,7 @@ export function removerVendaDoTurnoAtual(d: Pick<DadosPagamentoVenda, 'dinheiro'
   cur.cartao = round2(Math.max(0, cur.cartao - (Number(d.cartao) || 0)))
   cur.boleto = round2(Math.max(0, cur.boleto - (Number(d.boleto) || 0)))
   saveAcumulado(cur)
+  persistirTurnoAbertoRemoto()
 }
 
 /** Persiste abertura com data/hora atual e saldo informado. */
@@ -198,7 +267,7 @@ export function registrarAberturaTurno(saldoAbertura: number): AberturaTurnoCaix
     abertoEmIso: new Date().toISOString(),
     saldoAbertura: Math.max(0, saldoAbertura),
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(reg))
+  aberturaTurnoCache = reg
   resetAcumuladoVendasTurno(reg.dataReferencia)
 
   upsertHistoricoTurno({
@@ -227,19 +296,14 @@ export function registrarAberturaTurno(saldoAbertura: number): AberturaTurnoCaix
 
 /** Valor sugerido na próxima abertura (definido no último fechamento). */
 export function obterSaldoProximoCaixaSugerido(): number | null {
-  try {
-    const raw = localStorage.getItem(PROXIMO_CAIXA_KEY)
-    if (raw === null || raw === '') return null
-    const n = Number(raw.replace(',', '.'))
-    if (!Number.isFinite(n) || n < 0) return null
-    return round2(n)
-  } catch {
-    return null
-  }
+  if (proximoCaixaSugeridoCache === null) return null
+  const n = proximoCaixaSugeridoCache
+  if (!Number.isFinite(n) || n < 0) return null
+  return round2(n)
 }
 
 function salvarProximoCaixaParaProximaAbertura(valor: number): void {
-  localStorage.setItem(PROXIMO_CAIXA_KEY, String(round2(Math.max(0, valor))))
+  proximoCaixaSugeridoCache = round2(Math.max(0, valor))
 }
 
 /** Registra fechamento, persiste próximo caixa, remove turno aberto e acúmulo. */
@@ -273,9 +337,9 @@ export function registrarFechamentoTurno(proximoCaixaDeclarado: number): Fechame
     operador: 'Administrador',
   }
 
-  localStorage.setItem(ULTIMO_FECHAMENTO_KEY, JSON.stringify(reg))
+  ultimoFechamentoCache = reg
   salvarProximoCaixaParaProximaAbertura(prox)
-  localStorage.removeItem(STORAGE_KEY)
+  aberturaTurnoCache = null
   limparAcumulado()
 
   upsertHistoricoTurno({
@@ -310,11 +374,5 @@ export function registrarFechamentoTurno(proximoCaixaDeclarado: number): Fechame
 }
 
 export function obterUltimoFechamentoPersistido(): FechamentoTurnoCaixa | null {
-  try {
-    const raw = localStorage.getItem(ULTIMO_FECHAMENTO_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as FechamentoTurnoCaixa
-  } catch {
-    return null
-  }
+  return ultimoFechamentoCache
 }

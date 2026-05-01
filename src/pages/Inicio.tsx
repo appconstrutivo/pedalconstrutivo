@@ -9,7 +9,8 @@ import { ModalSegundaViaRecibo } from '../components/ModalSegundaViaRecibo'
 import { ModalCancelarVendaRealizada } from '../components/ModalCancelarVendaRealizada'
 import { ReciboVenda } from '../components/ReciboVenda'
 import type { ItemLancamentoVenda } from '../types'
-import { forceSyncLocalToSupabase } from '../supabase/seedFromLocal'
+import { hydrateAppFromSupabase } from '../supabase/hydrate'
+import { supabase } from '../lib/supabaseClient'
 
 type InicioProps = {
   onOpenPrototype: () => void
@@ -374,7 +375,7 @@ export function Inicio({
             </div>
             <h2 className="text-2xl sm:text-3xl font-bold text-[var(--text)] tracking-tight">Pedal Construtivo</h2>
             <p className="mt-2 text-[var(--text-muted)] max-w-lg mx-auto text-sm sm:text-base">
-              Gestão para o varejo da construção — interface renovada, dados locais e prontos para evoluir com sincronização em nuvem.
+              Gestão para o varejo da construção — dados persistentes no Supabase.
             </p>
           </section>
         </div>
@@ -385,43 +386,41 @@ export function Inicio({
           <span>
             Versão <span className="font-mono text-[var(--text)]">0.0.0</span>
             {' · '}
-            Dados: <span className="font-medium text-[var(--text)]">{DATA_MODE === 'local' ? 'local' : 'Supabase'}</span>
+            Dados: <span className="font-medium text-[var(--text)]">Supabase</span>
           </span>
           <span className="flex items-center gap-2 sm:justify-end">
-            {DATA_MODE === 'supabase' && (
-              <>
-                <button
-                  type="button"
-                  disabled={syncStatus === 'syncing'}
-                  onClick={() => {
-                    void (async () => {
-                      try {
-                        setSyncStatus('syncing')
-                        await forceSyncLocalToSupabase()
-                        setSyncStatus('ok')
-                        window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'sync' } }))
-                        setTimeout(() => setSyncStatus('idle'), 2500)
-                      } catch {
-                        setSyncStatus('error')
-                        setTimeout(() => setSyncStatus('idle'), 3500)
-                      }
-                    })()
-                  }}
-                  className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[10px] sm:text-[11px] font-semibold text-[var(--text)] hover:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
-                  title="Envia todo o banco offline (desta porta) para o Supabase"
-                >
-                  {syncStatus === 'syncing'
-                    ? 'Sincronizando…'
-                    : syncStatus === 'ok'
-                      ? 'Sincronizado'
-                      : syncStatus === 'error'
-                        ? 'Falhou'
-                        : 'Sincronizar offline → Supabase'}
-                </button>
-              </>
+            {DATA_MODE === 'supabase' && supabase !== null && (
+              <button
+                type="button"
+                disabled={syncStatus === 'syncing'}
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      setSyncStatus('syncing')
+                      await hydrateAppFromSupabase()
+                      setSyncStatus('ok')
+                      window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'sync' } }))
+                      setTimeout(() => setSyncStatus('idle'), 2500)
+                    } catch {
+                      setSyncStatus('error')
+                      setTimeout(() => setSyncStatus('idle'), 3500)
+                    }
+                  })()
+                }}
+                className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[10px] sm:text-[11px] font-semibold text-[var(--text)] hover:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
+                title="Recarrega cadastros e movimentações a partir do Supabase"
+              >
+                {syncStatus === 'syncing'
+                  ? 'Atualizando…'
+                  : syncStatus === 'ok'
+                    ? 'Atualizado'
+                    : syncStatus === 'error'
+                      ? 'Falhou'
+                      : 'Atualizar do Supabase'}
+              </button>
             )}
             <span className="font-mono sm:text-right">
-              Modo offline · camada remota: {DATA_MODE === 'supabase' ? 'ativa (Supabase)' : 'desativada'}
+              Conexão: {supabase !== null ? 'Supabase configurado' : 'sem variáveis de ambiente'}
             </span>
           </span>
         </div>

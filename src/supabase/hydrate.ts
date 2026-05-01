@@ -1,11 +1,18 @@
 import { DATA_MODE } from '../config/dataMode'
 import { supabase } from '../lib/supabaseClient'
-import type { Cliente, Fornecedor, Kit, Produto, TipoProduto } from '../types'
+import type { Cliente, Fornecedor, ItemCotacaoForm, ItemLancamentoVenda, Kit, Produto, TipoProduto } from '../types'
+import type { OrcamentoRascunho } from '../store/orcamentosRascunho'
+import { replaceOrcamentosRascunhoCache } from '../store/orcamentosRascunho'
+import { replaceRegistrosMovimentacaoCache } from '../store/historicoMovimentacao'
 import { saveClientes } from '../store/clientes'
+import { replaceCotacaoCache } from '../store/cotacao'
 import { saveFornecedores } from '../store/fornecedores'
 import { saveKits } from '../store/kits'
 import { saveProdutos } from '../store/produtos'
 import { saveTiposProduto } from '../store/tiposProduto'
+import { aplicarHidratacaoTurnosCaixa, type TurnoCaixaSbRow } from '../store/turnoCaixa'
+import { fetchTodasMovimentacoesSupabase } from './historico'
+import { subtotalLinhaPdv } from '../utils/moeda'
 
 function enabled(): boolean {
   return DATA_MODE === 'supabase' && supabase !== null
@@ -31,16 +38,6 @@ export async function hydrateCadastrosFromSupabase(): Promise<void> {
   if (prodRes.error) throw prodRes.error
   if (kitsRes.error) throw kitsRes.error
   if (kitItensRes.error) throw kitItensRes.error
-
-  // Se o Supabase está vazio, NÃO sobrescreve o cache local (offline acumulado).
-  const isEmpty =
-    (tiposRes.data?.length ?? 0) === 0 &&
-    (fornRes.data?.length ?? 0) === 0 &&
-    (cliRes.data?.length ?? 0) === 0 &&
-    (prodRes.data?.length ?? 0) === 0 &&
-    (kitsRes.data?.length ?? 0) === 0 &&
-    (kitItensRes.data?.length ?? 0) === 0
-  if (isEmpty) return
 
   const tipos: TipoProduto[] = (tiposRes.data ?? []).map((t) => ({ id: t.id, nome: t.nome }))
   saveTiposProduto(tipos)
@@ -143,8 +140,123 @@ export async function hydrateCadastrosFromSupabase(): Promise<void> {
 
 export async function hydrateHistoricoFromSupabase(): Promise<void> {
   if (!enabled()) return
-
-  // Por enquanto, mantém histórico local como fonte (evita conflito com dados existentes).
-  // Quando começarmos a operar 100% no Supabase, podemos “baixar” o histórico completo daqui também.
+  const regs = await fetchTodasMovimentacoesSupabase()
+  replaceRegistrosMovimentacaoCache(regs)
 }
 
+function mapRascunhoItemSb(row: Record<string, unknown>): ItemLancamentoVenda | null {
+  const produtoId = typeof row.produto_id === 'string' ? row.produto_id : ''
+  const descricao = typeof row.descricao === 'string' ? row.descricao : ''
+  if (!produtoId || !descricao) return null
+  const qtd = typeof row.quantidade === 'number' ? row.quantidade : Number(row.quantidade) || 0
+  const pu = typeof row.preco_unitario === 'number' ? row.preco_unitario : Number(row.preco_unitario) || 0
+  const rawDesc = row.desconto_percentual
+  const desconto =
+    rawDesc !== undefined && rawDesc !== null && Number.isFinite(Number(rawDesc))
+      ? Math.min(100, Math.max(0, Number(rawDesc)))
+      : 0
+  return {
+    id: typeof row.linha_id === 'string' ? row.linha_id : crypto.randomUUID(),
+    produtoId,
+    descricao,
+    codigoBarras: typeof row.codigo_barras === 'string' ? row.codigo_barras : '',
+    quantidade: qtd,
+    precoUnitario: pu,
+    descontoPercentual: desconto,
+    subtotal: subtotalLinhaPdv(qtd, pu, desconto),
+  }
+}
+
+export async function hydrateOrcamentosRascunhoFromSupabase(): Promise<void> {
+  if (!enabled()) return
+  const sb = supabase!
+
+  const cabRes = await sb.from('pc_orcamentos_rascunho').select('*').order('atualizado_em', { ascending: false })
+  if (cabRes.error) throw cabRes.error
+  const cabRows = cabRes.data ?? []
+  if (!cabRows.length) {
+    replaceOrcamentosRascunhoCache([])
+    return
+  }
+
+  const ids = cabRows.map((r: { id: string }) => r.id)
+  const itRes = await sb.from('pc_orcamentos_rascunho_itens').select('*').in('rascunho_id', ids)
+  if (itRes.error) throw itRes.error
+
+  const byRasc = new Map<string, Record<string, unknown>[]>()
+  for (const row of (itRes.data ?? []) as Record<string, unknown>[]) {
+    const rid = typeof row.rascunho_id === 'string' ? row.rascunho_id : ''
+    if (!rid) continue
+    const arr = byRasc.get(rid) ?? []
+    arr.push(row)
+    byRasc.set(rid, arr)
+  }
+
+  const lista: OrcamentoRascunho[] = cabRows.map((r: Record<string, unknown>) => {
+    const id = typeof r.id === 'string' ? r.id : ''
+    const agora = new Date().toISOString()
+    const itensRaw = byRasc.get(id) ?? []
+    const itens = itensRaw.map(mapRascunhoItemSb).filter((x): x is ItemLancamentoVenda => x !== null)
+    return {
+      id,
+      criadoEmIso: typeof r.criado_em === 'string' ? r.criado_em : agora,
+      atualizadoEmIso: typeof r.atualizado_em === 'string' ? r.atualizado_em : agora,
+      clienteId: typeof r.cliente_id === 'string' ? r.cliente_id : null,
+      clienteNome: typeof r.cliente_nome === 'string' ? r.cliente_nome : null,
+      observacoes: typeof r.observacoes === 'string' ? r.observacoes : '',
+      itens,
+    }
+  })
+
+  replaceOrcamentosRascunhoCache(lista.filter((x) => Boolean(x.id)))
+}
+
+export async function hydrateTurnosFromSupabase(): Promise<void> {
+  if (!enabled()) return
+  const sb = supabase!
+  const res = await sb.from('pc_turnos_caixa').select('*').order('data_referencia', { ascending: true })
+  if (res.error) throw res.error
+  aplicarHidratacaoTurnosCaixa((res.data ?? []) as TurnoCaixaSbRow[])
+}
+
+export async function hydrateCotacaoFromSupabase(): Promise<void> {
+  if (!enabled()) return
+  const sb = supabase!
+
+  const [itRes, fvRes] = await Promise.all([
+    sb.from('pc_cotacao_itens').select('*'),
+    sb.from('pc_cotacao_fornecedores_visiveis').select('*'),
+  ])
+  if (itRes.error) throw itRes.error
+  if (fvRes.error) throw fvRes.error
+
+  const itens: ItemCotacaoForm[] = ((itRes.data ?? []) as Record<string, unknown>[]).map((row) => {
+    const id = typeof row.id === 'string' ? row.id : crypto.randomUUID()
+    const descricao = typeof row.descricao === 'string' ? row.descricao : ''
+    const quantidade =
+      typeof row.quantidade === 'number' && Number.isFinite(row.quantidade) && row.quantidade > 0
+        ? row.quantidade
+        : 1
+    const precos: ItemCotacaoForm['precos'] = Array.isArray(row.precos)
+      ? (row.precos as ItemCotacaoForm['precos'])
+      : []
+    return { id, descricao, quantidade, precos }
+  })
+
+  const fornecedoresVisiveis: string[] = ((fvRes.data ?? []) as { fornecedor_id?: string }[])
+    .map((row) => row.fornecedor_id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+
+  replaceCotacaoCache(itens, fornecedoresVisiveis)
+}
+
+/** Carrega caches em memória a partir do Supabase (fonte única de verdade). */
+export async function hydrateAppFromSupabase(): Promise<void> {
+  await hydrateCadastrosFromSupabase()
+  await Promise.all([
+    hydrateHistoricoFromSupabase(),
+    hydrateOrcamentosRascunhoFromSupabase(),
+    hydrateTurnosFromSupabase(),
+    hydrateCotacaoFromSupabase(),
+  ])
+}

@@ -1,62 +1,14 @@
-import type { Cliente, TipoPessoaCliente } from '../types'
+import type { Cliente } from '../types'
 import { deleteCliente as sbDeleteCliente, upsertClientes as sbUpsertClientes } from '../supabase/pcApi'
 
-const STORAGE_KEY = 'pedal-construtivo-clientes'
+let clientesCache: Cliente[] = []
 
 export function loadClientes(): Cliente[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown[]
-    if (!Array.isArray(parsed)) return []
-    return parsed.map(normalizarCliente).filter((c): c is Cliente => c !== null)
-  } catch {
-    return []
-  }
-}
-
-function normalizarCliente(row: unknown): Cliente | null {
-  if (!row || typeof row !== 'object') return null
-  const r = row as Record<string, unknown>
-  if (typeof r.id !== 'string' || typeof r.codigo !== 'string') return null
-  const tp = r.tipoPessoa
-  const tipoPessoa: TipoPessoaCliente = tp === 'pj' ? 'pj' : 'pf'
-
-  return {
-    id: r.id,
-    codigo: r.codigo,
-    tipoPessoa,
-    situacaoFinanceiraOk: r.situacaoFinanceiraOk !== false,
-    nome: typeof r.nome === 'string' ? r.nome : '',
-    cpfCnpj: typeof r.cpfCnpj === 'string' ? r.cpfCnpj : '',
-    rgInscricaoEstadual: typeof r.rgInscricaoEstadual === 'string' ? r.rgInscricaoEstadual : '',
-    telefone: typeof r.telefone === 'string' ? r.telefone : '',
-    celular: typeof r.celular === 'string' ? r.celular : '',
-    cep: typeof r.cep === 'string' ? r.cep : '',
-    endereco: typeof r.endereco === 'string' ? r.endereco : '',
-    bairro: typeof r.bairro === 'string' ? r.bairro : '',
-    municipio: typeof r.municipio === 'string' ? r.municipio : '',
-    uf: typeof r.uf === 'string' ? r.uf : '',
-    email: typeof r.email === 'string' ? r.email : '',
-    aniversarioDia: typeof r.aniversarioDia === 'number' ? r.aniversarioDia : 0,
-    aniversarioMes: typeof r.aniversarioMes === 'number' ? r.aniversarioMes : 0,
-    aniversarioAno: typeof r.aniversarioAno === 'number' ? r.aniversarioAno : 0,
-    informacoesAdicionais: typeof r.informacoesAdicionais === 'string' ? r.informacoesAdicionais : '',
-    observacoes: typeof r.observacoes === 'string' ? r.observacoes : '',
-    faixaSalarial: typeof r.faixaSalarial === 'string' ? r.faixaSalarial : '',
-    descontoAutomaticoPct: typeof r.descontoAutomaticoPct === 'number' ? r.descontoAutomaticoPct : 0,
-    valorMaximoCompras: typeof r.valorMaximoCompras === 'number' ? r.valorMaximoCompras : -1,
-    criadoEm: typeof r.criadoEm === 'string' ? r.criadoEm : new Date().toISOString(),
-    atualizadoEm: typeof r.atualizadoEm === 'string' ? r.atualizadoEm : new Date().toISOString(),
-    saldoCompras: typeof r.saldoCompras === 'number' ? r.saldoCompras : 0,
-    pontosAcumulados: typeof r.pontosAcumulados === 'number' ? r.pontosAcumulados : 0,
-    recebeEmailPublicidade: r.recebeEmailPublicidade !== false,
-    ativo: r.ativo !== false,
-  }
+  return clientesCache
 }
 
 export function saveClientes(lista: Cliente[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(lista))
+  clientesCache = lista
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'clientes' } }))
 }
 

@@ -13,8 +13,7 @@ import { FechamentoCaixa } from './pages/FechamentoCaixa'
 import { GestaoFornecedores } from './pages/GestaoFornecedores'
 import { loadFornecedores } from './store/fornecedores'
 import { Estoque } from './pages/Estoque.tsx'
-import { hydrateCadastrosFromSupabase } from './supabase/hydrate'
-import { ensureSupabaseSeededFromLocal } from './supabase/seedFromLocal'
+import { hydrateAppFromSupabase } from './supabase/hydrate'
 
 function App() {
   const [tela, setTela] = useState<
@@ -27,10 +26,7 @@ function App() {
   useEffect(() => {
     void (async () => {
       try {
-        // Se Supabase estiver vazio, faz seed com dados offline acumulados.
-        await ensureSupabaseSeededFromLocal()
-        // Depois hidrata do Supabase para cache local.
-        await hydrateCadastrosFromSupabase()
+        await hydrateAppFromSupabase()
       } catch (err) {
         // Offline / env ausente na build / erro de rede ou permissão no Postgres.
         console.error('[Pedal Construtivo] Falha ao sincronizar com Supabase:', err)
@@ -51,8 +47,7 @@ function App() {
         <strong>Supabase não configurado neste deploy.</strong> Defina{' '}
         <code className="rounded bg-amber-100 px-1">VITE_SUPABASE_URL</code> e{' '}
         <code className="rounded bg-amber-100 px-1">VITE_SUPABASE_ANON_KEY</code> na Vercel (Production e
-        Preview) e faça um <strong>Redeploy</strong>. Sem isso, o app só usa o armazenamento vazio deste
-        navegador.
+        Preview) e faça um <strong>Redeploy</strong>. Sem isso, não há persistência de dados.
       </div>
     ) : null
 

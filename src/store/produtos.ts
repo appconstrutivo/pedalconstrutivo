@@ -1,61 +1,8 @@
-import type { Produto, TipoLancamentoProduto } from '../types'
-import { loadTiposProduto } from './tiposProduto'
+import type { Produto } from '../types'
 import { deleteProduto as sbDeleteProduto, upsertProdutos as sbUpsertProdutos } from '../supabase/pcApi'
 
-const STORAGE_KEY = 'pedal-construtivo-produtos'
-
-type ProdutoArmazenado = Partial<Produto> & {
-  id?: string
-  categoria?: string
-}
-
-function normalizarLinha(row: unknown): Produto | null {
-  if (!row || typeof row !== 'object') return null
-  const r = row as ProdutoArmazenado
-  if (typeof r.id !== 'string' || typeof r.criadoEm !== 'string') return null
-
-  const tipos = loadTiposProduto()
-  let tipoProdutoId = typeof r.tipoProdutoId === 'string' ? r.tipoProdutoId : ''
-  if (!tipoProdutoId && typeof r.categoria === 'string' && r.categoria.trim()) {
-    const nome = r.categoria.trim()
-    tipoProdutoId = tipos.find((t) => t.nome === nome)?.id ?? ''
-  }
-
-  const tl = r.tipoLancamento
-  const tipoLancamento: TipoLancamentoProduto =
-    tl === 'sem_controle_estoque' || tl === 'controle_estoque' || tl === 'servico' ? tl : 'controle_estoque'
-
-  const codigoInterno = typeof r.codigoInterno === 'string' ? r.codigoInterno.trim() : ''
-  const codigoFornecedor = typeof r.codigoFornecedor === 'string' ? r.codigoFornecedor.trim() : ''
-  const fornecedorId = typeof r.fornecedorId === 'string' ? r.fornecedorId : ''
-  const fornecedorNome = typeof r.fornecedorNome === 'string' ? r.fornecedorNome : ''
-
-  return {
-    id: r.id,
-    tipoLancamento,
-    codigoInterno,
-    codigoFornecedor,
-    fornecedorId,
-    fornecedorNome,
-    descricao: typeof r.descricao === 'string' ? r.descricao : '',
-    valorCusto: typeof r.valorCusto === 'number' ? r.valorCusto : 0.01,
-    valorVarejo: typeof r.valorVarejo === 'number' ? r.valorVarejo : 0.01,
-    valorAtacado: typeof r.valorAtacado === 'number' ? r.valorAtacado : 0.01,
-    tipoProdutoId,
-    codigoBarras: typeof r.codigoBarras === 'string' ? r.codigoBarras : '',
-    aceitaFracionar: Boolean(r.aceitaFracionar),
-    unidadeMedida: typeof r.unidadeMedida === 'string' ? r.unidadeMedida : 'UN',
-    pontuacao: typeof r.pontuacao === 'number' ? r.pontuacao : 0,
-    informacoesAdicionais: typeof r.informacoesAdicionais === 'string' ? r.informacoesAdicionais : '',
-    moeda: typeof r.moeda === 'string' ? r.moeda : 'R$',
-    cotacao: typeof r.cotacao === 'number' ? r.cotacao : 1,
-    estoqueMinimo: typeof r.estoqueMinimo === 'number' ? r.estoqueMinimo : 0,
-    estoqueAtual: typeof r.estoqueAtual === 'number' ? r.estoqueAtual : 0,
-    ativo: r.ativo !== false,
-    observacoes: typeof r.observacoes === 'string' ? r.observacoes : '',
-    criadoEm: r.criadoEm,
-  }
-}
+/** Cache em memória — preenchido pela hidratação do Supabase. */
+let produtosCache: Produto[] = []
 
 /** Maior sequência numérica já usada em códigos P-NNNNNN. */
 function maiorSequenciaCodigoInterno(lista: Produto[]): number {
@@ -85,26 +32,17 @@ export function gerarProximoCodigoInterno(lista: Produto[]): string {
 }
 
 export function loadProdutos(): Produto[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown[]
-    if (!Array.isArray(parsed)) return []
-    let list = parsed.map(normalizarLinha).filter((p): p is Produto => p !== null)
-    const migrado = migrarCodigosInternoSeNecessario(list)
-    if (migrado !== list) {
-      saveProdutos(migrado)
-      list = migrado
-    }
-    return list
-  } catch {
-    return []
+  const migrado = migrarCodigosInternoSeNecessario(produtosCache)
+  if (migrado !== produtosCache) {
+    produtosCache = migrado
+    window.dispatchEvent(new CustomEvent('pc:produtos-changed'))
+    window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'produtos' } }))
   }
+  return produtosCache
 }
 
 export function saveProdutos(produtos: Produto[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(produtos))
-  // Notifica a UI na mesma aba (storage event não dispara localmente).
+  produtosCache = migrarCodigosInternoSeNecessario(produtos)
   window.dispatchEvent(new CustomEvent('pc:produtos-changed'))
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'produtos' } }))
 }

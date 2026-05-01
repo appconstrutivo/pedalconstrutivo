@@ -40,7 +40,7 @@ export function ModalSegundaViaRecibo({ aberto, onFechar, onAbrirRecibo }: Props
       setErro(
         DATA_MODE === 'supabase' && supabase !== null
           ? 'Documento não encontrado no Supabase (ou foi cancelado). Verifique o número e tente novamente.'
-          : 'Documento não encontrado no histórico local. Verifique o número e tente novamente.',
+          : 'Documento não encontrado na base. Verifique o número e tente novamente.',
       )
       setCarregando(false)
       return
@@ -53,6 +53,7 @@ export function ModalSegundaViaRecibo({ aberto, onFechar, onAbrirRecibo }: Props
       codigoBarras: it.codigoBarras,
       quantidade: it.quantidade,
       precoUnitario: it.precoUnitario,
+      descontoPercentual: it.descontoPercentual ?? 0,
       subtotal: it.subtotal,
     }))
 

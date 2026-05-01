@@ -104,7 +104,7 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
 
     const usarSupabase = DATA_MODE === 'supabase' && supabase !== null
     if (!usarSupabase) {
-      setRegsSupabase([])
+      setRegsSupabase(loadRegistrosMovimentacao())
       setErroSupabase(null)
       return
     }
@@ -179,7 +179,7 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
               Relatório GERAL de movimentação em VENDAS
             </h2>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              Filtros e visualização — {DATA_MODE === 'supabase' && supabase !== null ? 'dados do Supabase' : 'dados locais (do dispositivo)'}
+              Filtros e visualização — {supabase !== null ? 'dados do Supabase' : 'cache da sessão (configure o Supabase)'}
             </p>
           </div>
           <button
