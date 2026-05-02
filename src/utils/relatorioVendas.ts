@@ -201,7 +201,114 @@ export function montarLinhasRelatorio(
   }
 
   ordenarLinhas(linhas, p)
-  return linhas
+  return agregarLinhasPorChave(linhas, p)
+}
+
+function deveAgregarRelatorio(p: ParametrosRelatorioVendas): boolean {
+  return (
+    p.agruparPorDia ||
+    p.agruparPorCliente ||
+    p.agruparPorProduto ||
+    p.agruparPorFormaPagamento
+  )
+}
+
+/** Apenas “Agrupar por dia”, sem outros agrupamentos — relatório vira resumo diário de faturamento. */
+export function isRelatorioResumoDiarioPuro(p: ParametrosRelatorioVendas): boolean {
+  return (
+    p.agruparPorDia &&
+    !p.agruparPorCliente &&
+    !p.agruparPorProduto &&
+    !p.agruparPorFormaPagamento
+  )
+}
+
+/** Nenhum agrupamento ativo. */
+export function isSemAgrupamentoRelatorio(p: ParametrosRelatorioVendas): boolean {
+  return (
+    !p.agruparPorDia &&
+    !p.agruparPorCliente &&
+    !p.agruparPorProduto &&
+    !p.agruparPorFormaPagamento
+  )
+}
+
+type AcumuladoChave = {
+  n: number
+  primeira: LinhaRelatorioVendas
+  quantidade: number
+  total: number
+  custoTotal: number
+  lucro: number
+}
+
+function montarLinhaConsolidada(acc: AcumuladoChave, p: ParametrosRelatorioVendas): LinhaRelatorioVendas {
+  const unitMedio = acc.quantidade > 0 ? round2(acc.total / acc.quantidade) : acc.primeira.unitario
+  const descConsolidada =
+    p.detalhe === 'item'
+      ? `Itens consolidados (${acc.n} ${acc.n === 1 ? 'linha' : 'linhas'})`
+      : `Faturamento consolidado (${acc.n} ${acc.n === 1 ? 'venda' : 'vendas'})`
+
+  return {
+    chaveAgrupamento: acc.primeira.chaveAgrupamento,
+    data: acc.primeira.data,
+    documento: '—',
+    cliente: p.agruparPorCliente ? acc.primeira.cliente : '—',
+    vendedor: '—',
+    descricao: descConsolidada,
+    quantidade: acc.quantidade,
+    unitario: unitMedio,
+    total: acc.total,
+    custoTotal: acc.custoTotal,
+    lucro: acc.lucro,
+    formasPagamento: '—',
+  }
+}
+
+/** Soma linhas com a mesma chave (ex.: um total por dia quando “Agrupar por dia” está ativo). */
+function agregarLinhasPorChave(
+  linhas: LinhaRelatorioVendas[],
+  p: ParametrosRelatorioVendas,
+): LinhaRelatorioVendas[] {
+  if (!deveAgregarRelatorio(p) || linhas.length === 0) return linhas
+
+  const map = new Map<string, AcumuladoChave>()
+
+  linhas.forEach((l, idx) => {
+    const key = l.chaveAgrupamento === 'todos' ? `__avulso_${idx}` : l.chaveAgrupamento
+
+    const ex = map.get(key)
+    if (!ex) {
+      map.set(key, {
+        n: 1,
+        primeira: l,
+        quantidade: l.quantidade,
+        total: l.total,
+        custoTotal: l.custoTotal,
+        lucro: l.lucro,
+      })
+    } else {
+      ex.n += 1
+      ex.quantidade = round2(ex.quantidade + l.quantidade)
+      ex.total = round2(ex.total + l.total)
+      ex.custoTotal = round2(ex.custoTotal + l.custoTotal)
+      ex.lucro = round2(ex.lucro + l.lucro)
+    }
+  })
+
+  const resumoDia = isRelatorioResumoDiarioPuro(p)
+  const out: LinhaRelatorioVendas[] = []
+  for (const acc of map.values()) {
+    const formatoConsolidado = acc.n > 1 || resumoDia
+    if (!formatoConsolidado) {
+      out.push(acc.primeira)
+      continue
+    }
+    out.push(montarLinhaConsolidada(acc, p))
+  }
+
+  ordenarLinhas(out, p)
+  return out
 }
 
 function montarChaveAgrupamento(

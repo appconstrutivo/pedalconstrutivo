@@ -360,6 +360,8 @@ export function Estoque({ onVoltar }: Props) {
           estoqueAtual: qtd,
           ativo: true,
           observacoes: 'KIT',
+          imagemUrlPublica: '',
+          descricaoDetalhada: '',
           criadoEm: new Date().toISOString(),
         }
 

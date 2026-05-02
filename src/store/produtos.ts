@@ -74,6 +74,8 @@ export function criarProdutoVazio(): Omit<Produto, 'id' | 'criadoEm'> {
     estoqueAtual: 0,
     ativo: true,
     observacoes: '',
+    imagemUrlPublica: '',
+    descricaoDetalhada: '',
   }
 }
 

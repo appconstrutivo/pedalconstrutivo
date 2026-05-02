@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { DATA_MODE } from '../config/dataMode'
 import { supabase } from '../lib/supabaseClient'
 import { loadClientes } from '../store/clientes'
@@ -10,8 +11,11 @@ import { formatarBrl } from '../utils/moeda'
 import {
   datasPorPreset,
   filtrarRegistros,
+  isRelatorioResumoDiarioPuro,
+  isSemAgrupamentoRelatorio,
   montarLinhasRelatorio,
   totaisRelatorio,
+  type LinhaRelatorioVendas,
   type ListagemItensPor,
   type ModoRelatorio,
   type ParametrosRelatorioVendas,
@@ -25,6 +29,212 @@ type Props = {
 }
 
 const VENDEDORES = ['Administrador']
+
+type RelatorioVendasPrintSurfaceProps = {
+  dataInicio: string
+  dataFim: string
+  linhas: LinhaRelatorioVendas[]
+  totais: { totalVendas: number; totalCusto: number; totalLucro: number }
+  /** Somente “Agrupar por dia”: tabela reduzida (faturamento diário). */
+  resumoDiarioPuro?: boolean
+  detalheRelatorio?: 'venda' | 'item'
+  /**
+   * Sem agrupamento + detalhe por venda: cada linha já é “uma venda”; Descrição/Qtd/Unit repetem o óbvio e são omitidas.
+   */
+  ocultarDescricaoQtdUnit?: boolean
+  rootId?: string
+  className?: string
+  ariaHidden?: boolean
+}
+
+function RelatorioVendasPrintSurface({
+  dataInicio,
+  dataFim,
+  linhas,
+  totais,
+  resumoDiarioPuro = false,
+  detalheRelatorio = 'venda',
+  ocultarDescricaoQtdUnit = false,
+  rootId,
+  className = '',
+  ariaHidden,
+}: RelatorioVendasPrintSurfaceProps) {
+  const qtdColuna =
+    detalheRelatorio === 'item' ? 'Qtd itens (soma)' : 'Nº vendas'
+
+  return (
+    <div
+      id={rootId}
+      aria-hidden={ariaHidden ? true : undefined}
+      className={`rounded-xl border border-[var(--border)] bg-white overflow-x-auto ${className}`}
+    >
+      <div className="p-4 border-b border-[var(--border)] print:border-slate-300">
+        <p className="text-sm font-bold text-[var(--text)]">
+          {resumoDiarioPuro ? 'Faturamento por dia' : 'Relatório de movimentação em vendas'}
+        </p>
+        <p className="text-xs text-[var(--text-muted)]">
+          Período: {dataInicio} a {dataFim}
+        </p>
+      </div>
+      {resumoDiarioPuro ? (
+        <table className="w-full text-xs sm:text-sm min-w-[420px]">
+          <thead>
+            <tr className="bg-[var(--surface)] text-left text-[var(--text-muted)] border-b border-[var(--border)]">
+              <th className="px-2 py-2">Data</th>
+              <th className="px-2 py-2 text-right">{qtdColuna}</th>
+              <th className="px-2 py-2 text-right">Total</th>
+              <th className="px-2 py-2 text-right">Custo</th>
+              <th className="px-2 py-2 text-right">Lucro</th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-[var(--text-muted)]">
+                  Nenhum registro para os filtros selecionados.
+                </td>
+              </tr>
+            ) : (
+              linhas.map((l, idx) => (
+                <tr key={`${l.data}-${idx}`} className="border-b border-[var(--border)]">
+                  <td className="px-2 py-1.5 tabular-nums">{l.data.split('-').reverse().join('/')}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{l.quantidade}</td>
+                  <td className="px-2 py-1.5 text-right font-medium tabular-nums">{formatarBrl(l.total)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">
+                    {formatarBrl(l.custoTotal)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-emerald-800">{formatarBrl(l.lucro)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+          {linhas.length > 0 && (
+            <tfoot>
+              <tr className="bg-teal-50/80 font-semibold border-t-2 border-[var(--accent)]">
+                <td colSpan={2} className="px-2 py-2 text-right">
+                  Totais
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalVendas)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalCusto)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalLucro)}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      ) : ocultarDescricaoQtdUnit ? (
+        <table className="w-full text-xs sm:text-sm min-w-[640px]">
+          <thead>
+            <tr className="bg-[var(--surface)] text-left text-[var(--text-muted)] border-b border-[var(--border)]">
+              <th className="px-2 py-2">Data</th>
+              <th className="px-2 py-2">Documento</th>
+              <th className="px-2 py-2">Cliente</th>
+              <th className="px-2 py-2 text-right">Total</th>
+              <th className="px-2 py-2 text-right">Custo</th>
+              <th className="px-2 py-2 text-right">Lucro</th>
+              <th className="px-2 py-2">Pagamentos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-[var(--text-muted)]">
+                  Nenhum registro para os filtros selecionados.
+                </td>
+              </tr>
+            ) : (
+              linhas.map((l, idx) => (
+                <tr key={`${l.documento}-${l.data}-${idx}`} className="border-b border-[var(--border)]">
+                  <td className="px-2 py-1.5 tabular-nums">{l.data.split('-').reverse().join('/')}</td>
+                  <td className="px-2 py-1.5 font-mono text-[10px]">{l.documento}</td>
+                  <td className="px-2 py-1.5">{l.cliente}</td>
+                  <td className="px-2 py-1.5 text-right font-medium tabular-nums">{formatarBrl(l.total)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">
+                    {formatarBrl(l.custoTotal)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-emerald-800">{formatarBrl(l.lucro)}</td>
+                  <td className="px-2 py-1.5 text-[10px] text-[var(--text-muted)] max-w-[140px]">
+                    {l.formasPagamento}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+          {linhas.length > 0 && (
+            <tfoot>
+              <tr className="bg-teal-50/80 font-semibold border-t-2 border-[var(--accent)]">
+                <td colSpan={3} className="px-2 py-2 text-right">
+                  Totais
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalVendas)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalCusto)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalLucro)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      ) : (
+        <table className="w-full text-xs sm:text-sm min-w-[800px]">
+          <thead>
+            <tr className="bg-[var(--surface)] text-left text-[var(--text-muted)] border-b border-[var(--border)]">
+              <th className="px-2 py-2">Data</th>
+              <th className="px-2 py-2">Documento</th>
+              <th className="px-2 py-2">Cliente</th>
+              <th className="px-2 py-2">Descrição</th>
+              <th className="px-2 py-2 text-right">Qtd.</th>
+              <th className="px-2 py-2 text-right">Unit.</th>
+              <th className="px-2 py-2 text-right">Total</th>
+              <th className="px-2 py-2 text-right">Custo</th>
+              <th className="px-2 py-2 text-right">Lucro</th>
+              <th className="px-2 py-2">Pagamentos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.length === 0 ? (
+              <tr>
+                <td colSpan={10} className="px-4 py-8 text-center text-[var(--text-muted)]">
+                  Nenhum registro para os filtros selecionados.
+                </td>
+              </tr>
+            ) : (
+              linhas.map((l, idx) => (
+                <tr key={`${l.documento}-${l.data}-${idx}`} className="border-b border-[var(--border)]">
+                  <td className="px-2 py-1.5 tabular-nums">{l.data.split('-').reverse().join('/')}</td>
+                  <td className="px-2 py-1.5 font-mono text-[10px]">{l.documento}</td>
+                  <td className="px-2 py-1.5">{l.cliente}</td>
+                  <td className="px-2 py-1.5 max-w-[200px] truncate">{l.descricao}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{l.quantidade}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{formatarBrl(l.unitario)}</td>
+                  <td className="px-2 py-1.5 text-right font-medium tabular-nums">{formatarBrl(l.total)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">
+                    {formatarBrl(l.custoTotal)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-emerald-800">{formatarBrl(l.lucro)}</td>
+                  <td className="px-2 py-1.5 text-[10px] text-[var(--text-muted)] max-w-[140px]">
+                    {l.formasPagamento}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+          {linhas.length > 0 && (
+            <tfoot>
+              <tr className="bg-teal-50/80 font-semibold border-t-2 border-[var(--accent)]">
+                <td colSpan={6} className="px-2 py-2 text-right">
+                  Totais
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalVendas)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalCusto)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalLucro)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      )}
+    </div>
+  )
+}
 
 export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
   const [etapa, setEtapa] = useState<'filtros' | 'resultado'>('filtros')
@@ -44,7 +254,7 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
   const [filtroTipo, setFiltroTipo] = useState(false)
   const [tipoId, setTipoId] = useState('')
 
-  const [agrDia, setAgrDia] = useState(true)
+  const [agrDia, setAgrDia] = useState(false)
   const [agrCliente, setAgrCliente] = useState(false)
   const [agrProduto, setAgrProduto] = useState(false)
   const [agrPagamento, setAgrPagamento] = useState(false)
@@ -76,6 +286,19 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
     if (modo !== 'aberto') return
     setOpenOrcamentos(true)
   }, [modo])
+
+  useEffect(() => {
+    if (!aberto || etapa !== 'resultado') return
+    const onBefore = () => document.body.classList.add('print-rel-vendas-ativo')
+    const onAfter = () => document.body.classList.remove('print-rel-vendas-ativo')
+    window.addEventListener('beforeprint', onBefore)
+    window.addEventListener('afterprint', onAfter)
+    return () => {
+      window.removeEventListener('beforeprint', onBefore)
+      window.removeEventListener('afterprint', onAfter)
+      document.body.classList.remove('print-rel-vendas-ativo')
+    }
+  }, [aberto, etapa])
 
   function montarParametros(): ParametrosRelatorioVendas {
     return {
@@ -133,6 +356,19 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
 
   const totais = useMemo(() => totaisRelatorio(linhas), [linhas])
 
+  /** Grade compacta só com “Agrupar por dia” isolado. */
+  const resumoDiarioPuro = useMemo(() => {
+    if (!paramsResultado) return false
+    if (isSemAgrupamentoRelatorio(paramsResultado)) return false
+    return isRelatorioResumoDiarioPuro(paramsResultado)
+  }, [paramsResultado])
+
+  /** Sem agrupamento + por venda: omite Descrição/Qtd/Unit (redundantes). Com agrupamento ou “por item”, mantém as colunas. */
+  const ocultarDescricaoQtdUnit = useMemo(() => {
+    if (!paramsResultado) return false
+    return isSemAgrupamentoRelatorio(paramsResultado) && paramsResultado.detalhe === 'venda'
+  }, [paramsResultado])
+
   function ajustarDataDocumento() {
     const numero = window.prompt('Informe o Nº do documento (cupom/venda) para ajustar a data.')?.trim()
     if (!numero) return
@@ -167,20 +403,17 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-[140] flex items-center justify-center p-3 sm:p-6 bg-slate-900/45 backdrop-blur-[1px]"
+      className="fixed inset-0 z-[140] flex items-center justify-center p-3 sm:p-6 bg-slate-900/45 backdrop-blur-[1px] print:static print:inset-auto print:block print:min-h-0 print:h-auto print:p-0 print:bg-white print:backdrop-blur-none"
       role="dialog"
       aria-modal="true"
       aria-labelledby="titulo-rel-vendas"
     >
-      <div className="bg-[var(--surface-card)] border border-[var(--border)] rounded-2xl shadow-2xl max-w-5xl w-full max-h-[min(96vh,920px)] flex flex-col">
+      <div className="bg-[var(--surface-card)] border border-[var(--border)] rounded-2xl shadow-2xl max-w-5xl w-full max-h-[min(96vh,920px)] flex flex-col print:max-h-none print:h-auto print:max-w-none print:shadow-none print:border-0 print:rounded-none">
         <div className="px-4 sm:px-6 py-3 border-b border-[var(--border)] flex items-start justify-between gap-3 shrink-0">
           <div>
             <h2 id="titulo-rel-vendas" className="text-base sm:text-lg font-bold text-[var(--text)]">
               Relatório GERAL de movimentação em VENDAS
             </h2>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              Filtros e visualização — {supabase !== null ? 'dados do Supabase' : 'cache da sessão (configure o Supabase)'}
-            </p>
           </div>
           <button
             type="button"
@@ -442,11 +675,7 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
                   <legend className="text-xs font-semibold text-[var(--text)] px-1">
                     Opções de agrupamento e visualização
                   </legend>
-                  <p className="text-[10px] text-[var(--text-muted)] mt-1 mb-2">
-                    Formas de pagamento: apenas as usadas no PDV (dinheiro, pix, cartão, boleto). Terminal não se
-                    aplica.
-                  </p>
-                  <div className="space-y-2 text-sm">
+                  <div className="space-y-2 text-sm mt-2">
                     <label className="flex gap-2 cursor-pointer">
                       <input type="checkbox" checked={agrDia} onChange={(e) => setAgrDia(e.target.checked)} />
                       Agrupar por dia
@@ -486,7 +715,7 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
             </div>
           </div>
         ) : (
-          <div className="overflow-y-auto px-4 sm:px-6 py-4 flex-1 min-h-0 flex flex-col gap-4">
+          <div className="overflow-y-auto px-4 sm:px-6 py-4 flex-1 min-h-0 flex flex-col gap-4 print:overflow-visible print:flex-none print:max-h-none print:h-auto">
             <div className="no-print flex flex-wrap gap-2">
               <button
                 type="button"
@@ -523,71 +752,30 @@ export function ModalRelatorioMovimentacaoVendas({ aberto, onFechar }: Props) {
               </div>
             )}
 
-            <div id="relatorio-vendas-print" className="rounded-xl border border-[var(--border)] bg-white overflow-x-auto">
-              <div className="p-4 border-b border-[var(--border)] print:border-slate-300">
-                <p className="text-sm font-bold text-[var(--text)]">Relatório de movimentação em vendas</p>
-                <p className="text-xs text-[var(--text-muted)]">
-                  Período: {dataInicio} a {dataFim}
-                </p>
-              </div>
-              <table className="w-full text-xs sm:text-sm min-w-[800px]">
-                <thead>
-                  <tr className="bg-[var(--surface)] text-left text-[var(--text-muted)] border-b border-[var(--border)]">
-                    <th className="px-2 py-2">Data</th>
-                    <th className="px-2 py-2">Documento</th>
-                    <th className="px-2 py-2">Cliente</th>
-                    <th className="px-2 py-2">Descrição</th>
-                    <th className="px-2 py-2 text-right">Qtd</th>
-                    <th className="px-2 py-2 text-right">Unit.</th>
-                    <th className="px-2 py-2 text-right">Total</th>
-                    <th className="px-2 py-2 text-right">Custo</th>
-                    <th className="px-2 py-2 text-right">Lucro</th>
-                    <th className="px-2 py-2">Pagamentos</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {linhas.length === 0 ? (
-                    <tr>
-                      <td colSpan={10} className="px-4 py-8 text-center text-[var(--text-muted)]">
-                        Nenhum registro para os filtros selecionados.
-                      </td>
-                    </tr>
-                  ) : (
-                    linhas.map((l, idx) => (
-                      <tr key={`${l.documento}-${idx}`} className="border-b border-[var(--border)]">
-                        <td className="px-2 py-1.5 tabular-nums">{l.data.split('-').reverse().join('/')}</td>
-                        <td className="px-2 py-1.5 font-mono text-[10px]">{l.documento}</td>
-                        <td className="px-2 py-1.5">{l.cliente}</td>
-                        <td className="px-2 py-1.5 max-w-[200px] truncate">{l.descricao}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums">{l.quantidade}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums">{formatarBrl(l.unitario)}</td>
-                        <td className="px-2 py-1.5 text-right font-medium tabular-nums">{formatarBrl(l.total)}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">
-                          {formatarBrl(l.custoTotal)}
-                        </td>
-                        <td className="px-2 py-1.5 text-right tabular-nums text-emerald-800">{formatarBrl(l.lucro)}</td>
-                        <td className="px-2 py-1.5 text-[10px] text-[var(--text-muted)] max-w-[140px]">
-                          {l.formasPagamento}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-                {linhas.length > 0 && (
-                  <tfoot>
-                    <tr className="bg-teal-50/80 font-semibold border-t-2 border-[var(--accent)]">
-                      <td colSpan={6} className="px-2 py-2 text-right">
-                        Totais
-                      </td>
-                      <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalVendas)}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalCusto)}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">{formatarBrl(totais.totalLucro)}</td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
+            <RelatorioVendasPrintSurface
+              dataInicio={dataInicio}
+              dataFim={dataFim}
+              linhas={linhas}
+              totais={totais}
+              resumoDiarioPuro={resumoDiarioPuro}
+              detalheRelatorio={paramsResultado?.detalhe ?? 'venda'}
+              ocultarDescricaoQtdUnit={ocultarDescricaoQtdUnit}
+            />
+            {createPortal(
+              <RelatorioVendasPrintSurface
+                rootId="relatorio-vendas-print"
+                ariaHidden
+                dataInicio={dataInicio}
+                dataFim={dataFim}
+                linhas={linhas}
+                totais={totais}
+                resumoDiarioPuro={resumoDiarioPuro}
+                detalheRelatorio={paramsResultado?.detalhe ?? 'venda'}
+                ocultarDescricaoQtdUnit={ocultarDescricaoQtdUnit}
+                className="fixed top-0 left-[-10000px] w-[56rem] max-w-[100vw] opacity-0 pointer-events-none print:static print:left-auto print:w-full print:max-w-none print:opacity-100 print:pointer-events-auto"
+              />,
+              document.body
+            )}
           </div>
         )}
 

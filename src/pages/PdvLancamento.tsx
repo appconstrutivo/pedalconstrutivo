@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ModalPagamentoVenda } from '../components/ModalPagamentoVenda'
 import { ReciboVenda } from '../components/ReciboVenda'
 import type {
@@ -43,6 +43,17 @@ type Precificacao = 'varejo' | 'atacado'
 
 function precoPorModo(p: Produto, modo: Precificacao): number {
   return modo === 'varejo' ? p.valorVarejo : p.valorAtacado
+}
+
+function urlImagemPublicaValida(raw: string): boolean {
+  const s = raw.trim()
+  if (!s) return false
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 function gerarNumeroDocumento(): string {
@@ -101,6 +112,27 @@ export function PdvLancamento({
       return hay.includes(nq)
     })
   }, [produtoBusca, produtos])
+
+  /** Item em foco na lista (dropdown aberto) ou produto já escolhido (dropdown fechado). */
+  const produtoPreview = useMemo(() => {
+    if (produtoDropdownAberto && produtosFiltrados.length > 0) {
+      return produtosFiltrados[produtoActiveIdx] ?? null
+    }
+    return produtoSelecionado
+  }, [
+    produtoDropdownAberto,
+    produtosFiltrados,
+    produtoActiveIdx,
+    produtoSelecionado,
+  ])
+
+  const [previewImgErro, setPreviewImgErro] = useState(false)
+  const previewUrl = (produtoPreview?.imagemUrlPublica ?? '').trim()
+  const previewUrlOk = urlImagemPublicaValida(previewUrl)
+
+  useEffect(() => {
+    setPreviewImgErro(false)
+  }, [previewUrl, produtoPreview?.id])
 
   const destaque = useMemo(() => {
     if (!destaqueId) return itens[itens.length - 1] ?? null
@@ -315,141 +347,202 @@ export function PdvLancamento({
           </div>
         </section>
 
-        <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4 sm:p-5 shadow-sm space-y-4">
+        <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4 sm:p-5 shadow-sm space-y-5">
           <p className="text-sm font-medium text-[var(--text)]">Adicionar item</p>
-          <label htmlFor="pdv-prod" className="block text-xs text-[var(--text-muted)] mb-1">
-            Selecione o produto cadastrado
-          </label>
-          <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
-            <div className="flex-1 min-w-0">
-              <div className="relative">
-                <input
-                  id="pdv-prod"
-                  role="combobox"
-                  aria-expanded={produtoDropdownAberto}
-                  aria-controls="pdv-produtos-list"
-                  aria-autocomplete="list"
-                  type="text"
-                  value={produtoBusca}
-                  onChange={(e) => {
-                    setProdutoBusca(e.target.value)
-                    setProdutoDropdownAberto(true)
-                    setProdutoActiveIdx(0)
-                    setProdutoId('')
-                  }}
-                  onFocus={() => setProdutoDropdownAberto(true)}
-                  onBlur={() => {
-                    // pequeno delay para permitir click na lista
-                    window.setTimeout(() => setProdutoDropdownAberto(false), 120)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowDown') {
-                      e.preventDefault()
-                      setProdutoDropdownAberto(true)
-                      setProdutoActiveIdx((i) => Math.min(i + 1, Math.max(0, produtosFiltrados.length - 1)))
-                      return
-                    }
-                    if (e.key === 'ArrowUp') {
-                      e.preventDefault()
-                      setProdutoDropdownAberto(true)
-                      setProdutoActiveIdx((i) => Math.max(i - 1, 0))
-                      return
-                    }
-                    if (e.key === 'Enter') {
-                      if (!produtoDropdownAberto) return
-                      e.preventDefault()
-                      const p = produtosFiltrados[produtoActiveIdx]
-                      if (p) selecionarProduto(p.id)
-                      return
-                    }
-                    if (e.key === 'Escape') setProdutoDropdownAberto(false)
-                  }}
-                  placeholder="Digite para buscar e selecionar…"
-                  className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-sm"
-                />
 
-                {produtoDropdownAberto ? (
-                  <div
-                    id="pdv-produtos-list"
-                    role="listbox"
-                    className="absolute z-20 mt-1 w-full overflow-auto max-h-72 rounded-xl border border-[var(--border)] bg-white shadow-lg"
-                  >
-                    {produtosFiltrados.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-[var(--text-muted)]">Nenhum produto encontrado.</div>
-                    ) : (
-                      produtosFiltrados.slice(0, 150).map((p, idx) => {
-                        const preco = formatarBrl(precoPorModo(p, precificacao))
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            role="option"
-                            aria-selected={idx === produtoActiveIdx}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => selecionarProduto(p.id)}
-                            onMouseEnter={() => setProdutoActiveIdx(idx)}
-                            className={`w-full text-left px-3 py-2 text-sm border-b border-[var(--border)]/60 last:border-b-0 ${
-                              idx === produtoActiveIdx ? 'bg-[var(--surface)]' : 'bg-white'
-                            }`}
-                          >
-                            <div className="font-medium text-[var(--text)]">{p.descricao}</div>
-                            <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
-                              {p.codigoInterno || p.codigoBarras ? `${p.codigoInterno || p.codigoBarras} · ` : ''}
-                              Estq. {p.estoqueAtual ?? 0} · {preco}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6 items-start">
+            <div className="lg:col-span-7 space-y-4 min-w-0">
+              <div>
+                <label htmlFor="pdv-prod" className="block text-xs text-[var(--text-muted)] mb-1">
+                  Selecione o produto cadastrado
+                </label>
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                  <div className="flex-1 min-w-0">
+                    <div className="relative">
+                      <input
+                        id="pdv-prod"
+                        role="combobox"
+                        aria-expanded={produtoDropdownAberto}
+                        aria-controls="pdv-produtos-list"
+                        aria-autocomplete="list"
+                        type="text"
+                        value={produtoBusca}
+                        onChange={(e) => {
+                          setProdutoBusca(e.target.value)
+                          setProdutoDropdownAberto(true)
+                          setProdutoActiveIdx(0)
+                          setProdutoId('')
+                        }}
+                        onFocus={() => setProdutoDropdownAberto(true)}
+                        onBlur={() => {
+                          window.setTimeout(() => setProdutoDropdownAberto(false), 120)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault()
+                            setProdutoDropdownAberto(true)
+                            setProdutoActiveIdx((i) =>
+                              Math.min(i + 1, Math.max(0, produtosFiltrados.length - 1)),
+                            )
+                            return
+                          }
+                          if (e.key === 'ArrowUp') {
+                            e.preventDefault()
+                            setProdutoDropdownAberto(true)
+                            setProdutoActiveIdx((i) => Math.max(i - 1, 0))
+                            return
+                          }
+                          if (e.key === 'Enter') {
+                            if (!produtoDropdownAberto) return
+                            e.preventDefault()
+                            const p = produtosFiltrados[produtoActiveIdx]
+                            if (p) selecionarProduto(p.id)
+                            return
+                          }
+                          if (e.key === 'Escape') setProdutoDropdownAberto(false)
+                        }}
+                        placeholder="Digite para buscar e selecionar…"
+                        className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-sm"
+                      />
+
+                      {produtoDropdownAberto ? (
+                        <div
+                          id="pdv-produtos-list"
+                          role="listbox"
+                          className="absolute z-20 mt-1 w-full overflow-auto max-h-72 rounded-xl border border-[var(--border)] bg-white shadow-lg"
+                        >
+                          {produtosFiltrados.length === 0 ? (
+                            <div className="px-3 py-2 text-sm text-[var(--text-muted)]">
+                              Nenhum produto encontrado.
                             </div>
-                          </button>
-                        )
-                      })
-                    )}
+                          ) : (
+                            produtosFiltrados.slice(0, 150).map((p, idx) => {
+                              const preco = formatarBrl(precoPorModo(p, precificacao))
+                              return (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={idx === produtoActiveIdx}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => selecionarProduto(p.id)}
+                                  onMouseEnter={() => setProdutoActiveIdx(idx)}
+                                  className={`w-full text-left px-3 py-2 text-sm border-b border-[var(--border)]/60 last:border-b-0 ${
+                                    idx === produtoActiveIdx ? 'bg-[var(--surface)]' : 'bg-white'
+                                  }`}
+                                >
+                                  <div className="font-medium text-[var(--text)]">{p.descricao}</div>
+                                  <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                                    {p.codigoInterno || p.codigoBarras
+                                      ? `${p.codigoInterno || p.codigoBarras} · `
+                                      : ''}
+                                    Estq. {p.estoqueAtual ?? 0} · {preco}
+                                  </div>
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                ) : null}
+                  <div className="w-full sm:w-28 shrink-0">
+                    <label htmlFor="pdv-qtd" className="block text-xs text-[var(--text-muted)] mb-1">
+                      Quantidade
+                    </label>
+                    <input
+                      id="pdv-qtd"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={qtd}
+                      onChange={(e) => setQtd(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={adicionar}
+                    disabled={!produtoSelecionado}
+                    className="rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0 w-full sm:w-auto"
+                  >
+                    Adicionar à listagem
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <span className="block text-xs font-medium text-[var(--text)] mb-2">
+                  O item será lançado com valor de
+                </span>
+                <div className="flex flex-wrap gap-4">
+                  <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="preco-pdv"
+                      checked={precificacao === 'varejo'}
+                      onChange={() => setPrecificacao('varejo')}
+                    />
+                    Varejo
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="preco-pdv"
+                      checked={precificacao === 'atacado'}
+                      onChange={() => setPrecificacao('atacado')}
+                    />
+                    Atacado
+                  </label>
+                </div>
               </div>
             </div>
-            <div className="w-full sm:w-28">
-              <label htmlFor="pdv-qtd" className="block text-xs text-[var(--text-muted)] mb-1">
-                Quantidade
-              </label>
-              <input
-                id="pdv-qtd"
-                type="number"
-                min={1}
-                step={1}
-                value={qtd}
-                onChange={(e) => setQtd(Math.max(1, Number(e.target.value) || 1))}
-                className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-sm"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={adicionar}
-              disabled={!produtoSelecionado}
-              className="rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-            >
-              Adicionar à listagem
-            </button>
-          </div>
 
-          <div>
-            <span className="block text-xs font-medium text-[var(--text)] mb-2">O item será lançado com valor de</span>
-            <div className="flex flex-wrap gap-4">
-              <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="radio"
-                  name="preco-pdv"
-                  checked={precificacao === 'varejo'}
-                  onChange={() => setPrecificacao('varejo')}
-                />
-                Varejo
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="radio"
-                  name="preco-pdv"
-                  checked={precificacao === 'atacado'}
-                  onChange={() => setPrecificacao('atacado')}
-                />
-                Atacado
-              </label>
+            <div className="lg:col-span-5 lg:sticky lg:top-24">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/35 overflow-hidden shadow-sm">
+                <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-card)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Foto do produto
+                  </p>
+                  {produtoPreview ? (
+                    <p className="text-sm font-semibold text-[var(--text)] mt-1 leading-snug line-clamp-2">
+                      {produtoPreview.descricao}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-[var(--text-muted)] mt-1">Nenhum produto em foco</p>
+                  )}
+                  {produtoDropdownAberto && produtoPreview ? (
+                    <p className="text-[11px] text-[var(--accent)] mt-1 font-medium">
+                      Pré-visualizando item destacado na lista
+                    </p>
+                  ) : null}
+                </div>
+                <div className="aspect-[4/3] max-h-[min(42vh,280px)] min-h-[200px] bg-gradient-to-b from-white to-[var(--surface)]/80 flex items-center justify-center p-4">
+                  {!produtoPreview ? (
+                    <p className="text-sm text-center text-[var(--text-muted)] px-2">
+                      Busque e passe o mouse ou use as setas na lista para ver a foto.
+                    </p>
+                  ) : !previewUrlOk ? (
+                    <div className="text-center px-3">
+                      <p className="text-sm text-[var(--text-muted)]">Sem URL de imagem cadastrada.</p>
+                      <p className="text-xs text-[var(--text-muted)] mt-2">
+                        Cadastre o link em Produto → guia &quot;Imagem e descrição&quot;.
+                      </p>
+                    </div>
+                  ) : previewImgErro ? (
+                    <p className="text-sm text-center text-amber-900/90 px-2">
+                      Imagem indisponível ou bloqueada pelo site de origem.
+                    </p>
+                  ) : (
+                    <img
+                      src={previewUrl}
+                      alt={produtoPreview.descricao}
+                      className="max-h-full max-w-full object-contain rounded-xl shadow-sm ring-1 ring-black/5"
+                      onError={() => setPreviewImgErro(true)}
+                    />
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </section>

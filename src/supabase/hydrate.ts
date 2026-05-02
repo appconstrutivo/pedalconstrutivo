@@ -119,6 +119,8 @@ export async function hydrateCadastrosFromSupabase(): Promise<void> {
     estoqueAtual: Number(p.estoque_atual) || 0,
     ativo: p.ativo !== false,
     observacoes: p.observacoes ?? '',
+    imagemUrlPublica: p.imagem_url_publica ?? '',
+    descricaoDetalhada: p.descricao_detalhada ?? '',
     criadoEm: p.criado_em ?? new Date().toISOString(),
   }))
   saveProdutos(produtos)

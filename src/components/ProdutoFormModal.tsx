@@ -21,7 +21,24 @@ type Props = {
 
 function draftFromProduto(p: Produto): Omit<Produto, 'id' | 'criadoEm'> {
   const { id: _id, criadoEm: _c, ...rest } = p
-  return rest
+  return {
+    ...rest,
+    imagemUrlPublica: rest.imagemUrlPublica ?? '',
+    descricaoDetalhada: rest.descricaoDetalhada ?? '',
+  }
+}
+
+type AbaProdutoForm = 'geral' | 'imagem_descricao'
+
+function urlImagemPublicaValida(raw: string): boolean {
+  const s = raw.trim()
+  if (!s) return false
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 function arredondarMoeda(n: number): number {
@@ -36,9 +53,13 @@ export function ProdutoFormModal({ aberto, modo, produtoInicial, onFechar, onSal
   const [pctLucroVarejo, setPctLucroVarejo] = useState(0)
   const [pctLucroAtacado, setPctLucroAtacado] = useState(0)
   const [sugestaoErro, setSugestaoErro] = useState<string | null>(null)
+  const [aba, setAba] = useState<AbaProdutoForm>('geral')
+  const [previewErro, setPreviewErro] = useState(false)
 
   useEffect(() => {
     if (!aberto) return
+    setAba('geral')
+    setPreviewErro(false)
     setTiposCadastrados(loadTiposProduto())
     setFornecedoresCadastrados(loadFornecedores().filter((f) => f.ativo !== false))
     if (modo === 'editar' && produtoInicial) {
@@ -59,6 +80,11 @@ export function ProdutoFormModal({ aberto, modo, produtoInicial, onFechar, onSal
   const lucroAtacado = useMemo(
     () => percentualLucro(draft.valorCusto, draft.valorAtacado),
     [draft.valorCusto, draft.valorAtacado],
+  )
+
+  const urlPreviewOk = useMemo(
+    () => urlImagemPublicaValida(draft.imagemUrlPublica),
+    [draft.imagemUrlPublica],
   )
 
   if (!aberto) return null
@@ -120,7 +146,47 @@ export function ProdutoFormModal({ aberto, modo, produtoInicial, onFechar, onSal
           </button>
         </div>
 
-        <div className="overflow-y-auto px-5 py-4 space-y-6 flex-1 min-h-0">
+        <div
+          className="px-5 pt-2 pb-0 border-b border-[var(--border)] shrink-0 flex gap-1"
+          role="tablist"
+          aria-label="Seções do cadastro"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={aba === 'geral'}
+            id="tab-produto-geral"
+            onClick={() => setAba('geral')}
+            className={`rounded-t-lg px-3 py-2 text-sm font-medium transition-colors ${
+              aba === 'geral'
+                ? 'bg-[var(--surface)] text-[var(--text)] border border-b-0 border-[var(--border)] -mb-px'
+                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+            }`}
+          >
+            Geral
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={aba === 'imagem_descricao'}
+            id="tab-produto-imagem"
+            onClick={() => setAba('imagem_descricao')}
+            className={`rounded-t-lg px-3 py-2 text-sm font-medium transition-colors ${
+              aba === 'imagem_descricao'
+                ? 'bg-[var(--surface)] text-[var(--text)] border border-b-0 border-[var(--border)] -mb-px'
+                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+            }`}
+          >
+            Imagem e descrição
+          </button>
+        </div>
+
+        <div
+          className="overflow-y-auto px-5 py-4 space-y-6 flex-1 min-h-0"
+          role="tabpanel"
+          aria-labelledby={aba === 'geral' ? 'tab-produto-geral' : 'tab-produto-imagem'}
+          hidden={aba !== 'geral'}
+        >
           <div>
             <label htmlFor="tipo-lancamento" className="block text-sm font-medium text-[var(--text)] mb-1.5">
               Indique qual é o tipo de lançamento
@@ -445,6 +511,74 @@ export function ProdutoFormModal({ aberto, modo, produtoInicial, onFechar, onSal
               />
             </div>
           </fieldset>
+        </div>
+
+        <div
+          className="overflow-y-auto px-5 py-4 space-y-5 flex-1 min-h-0"
+          role="tabpanel"
+          aria-labelledby="tab-produto-imagem"
+          hidden={aba !== 'imagem_descricao'}
+        >
+          <p className="text-xs text-[var(--text-muted)]">
+            Use um link público (https) da imagem — não há upload para o Storage do Supabase. Alguns sites bloqueiam
+            exibir a foto fora do próprio domínio; nesse caso a prévia pode falhar mesmo com URL válida.
+          </p>
+          <div>
+            <label htmlFor="imagem-url-publica" className="block text-sm font-medium text-[var(--text)] mb-1.5">
+              URL pública da imagem
+            </label>
+            <input
+              id="imagem-url-publica"
+              type="url"
+              inputMode="url"
+              placeholder="https://…"
+              value={draft.imagemUrlPublica}
+              onChange={(e) => {
+                setPreviewErro(false)
+                setDraft((d) => ({ ...d, imagemUrlPublica: e.target.value }))
+              }}
+              className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-sm"
+              autoComplete="off"
+            />
+            {draft.imagemUrlPublica.trim() && !urlPreviewOk ? (
+              <p className="mt-1.5 text-xs text-amber-800">Informe uma URL completa começando com http:// ou https://</p>
+            ) : null}
+          </div>
+          <div>
+            <span className="block text-sm font-medium text-[var(--text)] mb-1.5">Pré-visualização</span>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 flex items-center justify-center min-h-[180px] p-4">
+              {urlPreviewOk && !previewErro ? (
+                <img
+                  src={draft.imagemUrlPublica.trim()}
+                  alt={`Ilustração de ${draft.descricao.trim() || 'produto'}`}
+                  className="max-h-[240px] max-w-full object-contain rounded-lg"
+                  onError={() => setPreviewErro(true)}
+                  onLoad={() => setPreviewErro(false)}
+                />
+              ) : draft.imagemUrlPublica.trim() && urlPreviewOk && previewErro ? (
+                <p className="text-sm text-[var(--text-muted)] text-center">
+                  Não foi possível carregar a imagem (bloqueio do site ou arquivo indisponível).
+                </p>
+              ) : (
+                <p className="text-sm text-[var(--text-muted)] text-center">
+                  Cole uma URL válida para ver a imagem aqui.
+                </p>
+              )}
+            </div>
+          </div>
+          <div>
+            <label htmlFor="descricao-detalhada" className="block text-sm font-medium text-[var(--text)] mb-1.5">
+              Descrição do produto
+            </label>
+            <textarea
+              id="descricao-detalhada"
+              rows={6}
+              value={draft.descricaoDetalhada}
+              onChange={(e) => setDraft((d) => ({ ...d, descricaoDetalhada: e.target.value }))}
+              placeholder="Detalhes técnicos, aplicabilidade, garantia, etc."
+              className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-sm resize-y min-h-[120px]"
+            />
+          </div>
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-3 shrink-0 bg-[var(--surface)]/50 rounded-b-2xl">

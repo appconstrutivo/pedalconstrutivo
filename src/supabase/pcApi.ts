@@ -152,6 +152,8 @@ export async function upsertProdutos(rows: Produto[]): Promise<void> {
         estoque_atual: p.estoqueAtual ?? 0,
         ativo: p.ativo !== false,
         observacoes: p.observacoes ?? '',
+        imagem_url_publica: p.imagemUrlPublica?.trim() ? p.imagemUrlPublica.trim() : '',
+        descricao_detalhada: p.descricaoDetalhada ?? '',
         criado_em: isoOrNow(p.criadoEm),
       })),
       { onConflict: 'id' },

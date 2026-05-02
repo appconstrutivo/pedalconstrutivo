@@ -98,6 +98,10 @@ export interface Produto {
   estoqueAtual: number
   ativo: boolean
   observacoes: string
+  /** URL pública da foto (ex.: CDN/fornecedor); não usa armazenamento do Supabase Storage. */
+  imagemUrlPublica: string
+  /** Texto longo para vitrine, catálogo ou observações ao cliente (além da descrição resumida). */
+  descricaoDetalhada: string
   criadoEm: string
 }
 

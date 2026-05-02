@@ -45,12 +45,36 @@ input[type="number"]::-webkit-outer-spin-button {
   }
   #recibo-print,
   #resumo-turno-print,
-  #relatorio-vendas-print,
   #pedido-compra-print {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     max-width: 100%;
+  }
+  /*
+   * Relatório de vendas: várias páginas. position:absolute no container quebra a
+   * fragmentação no Chrome (cabeçalho/sobreposição na 2ª página). Fluxo normal + portal em body.
+   */
+  #relatorio-vendas-print {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100%;
+    max-width: 100%;
+    overflow: visible !important;
+  }
+  #relatorio-vendas-print table {
+    break-inside: auto;
+  }
+  #relatorio-vendas-print thead {
+    display: table-header-group;
+  }
+  #relatorio-vendas-print tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  body.print-rel-vendas-ativo #root {
+    display: none !important;
   }
 }
