@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Kit, Produto } from '../types'
 import { ProdutoFormModal } from '../components/ProdutoFormModal'
 import { KitComposicaoModal } from '../components/KitComposicaoModal'
 import { loadProdutos, saveProdutos, gerarProximoCodigoInterno, updateProduto } from '../store/produtos'
 import { formatarBrl, round2 } from '../utils/moeda'
-import { addKit, findKitByProdutoKitId, upsertKitByProdutoKitId } from '../store/kits'
+import { findKitByProdutoKitId, loadKits, upsertKitByProdutoKitId } from '../store/kits'
 import {
   criarNovoPedidoCompra,
   excluirPedidoCompra,
@@ -22,6 +22,18 @@ type Props = {
 }
 
 type KitLinhaDraft = { produtoId: string; quantidadePorKit: number }
+
+function normalizarKitItens(itens: KitLinhaDraft[]): KitLinhaDraft[] {
+  const m = new Map<string, number>()
+  for (const i of itens) {
+    const pid = (i.produtoId || '').trim()
+    if (!pid) continue
+    const q = round2(Number(i.quantidadePorKit || 0))
+    if (q <= 0) continue
+    m.set(pid, round2((m.get(pid) ?? 0) + q))
+  }
+  return Array.from(m.entries()).map(([produtoId, quantidadePorKit]) => ({ produtoId, quantidadePorKit }))
+}
 
 function calcularCustoKit(itens: KitLinhaDraft[], produtos: Produto[]): number {
   let total = 0
@@ -54,6 +66,7 @@ function disponibilidadeOk(
 export function Estoque({ onVoltar }: Props) {
   const [tab, setTab] = useState<'visao' | 'kit' | 'pedido'>('visao')
   const [produtos, setProdutos] = useState<Produto[]>(() => loadProdutos())
+  const [kits, setKits] = useState<Kit[]>(() => loadKits())
   const [produtoEditar, setProdutoEditar] = useState<Produto | null>(null)
   const [produtoModalAberto, setProdutoModalAberto] = useState(false)
   const [kitCompAberto, setKitCompAberto] = useState(false)
@@ -78,6 +91,13 @@ export function Estoque({ onVoltar }: Props) {
   const [produtoAddId, setProdutoAddId] = useState('')
   const [qtdAdd, setQtdAdd] = useState(1)
   const [erroKit, setErroKit] = useState<string | null>(null)
+  const [kitBusca, setKitBusca] = useState('')
+  const [kitSelecionadoId, setKitSelecionadoId] = useState<string>('')
+  const [kitCriarComoNovo, setKitCriarComoNovo] = useState(false)
+  const [produtoBuscaKit, setProdutoBuscaKit] = useState('')
+  const [produtoDropdownAberto, setProdutoDropdownAberto] = useState(false)
+  const [produtoActiveIdx, setProdutoActiveIdx] = useState(0)
+  const produtoBlurTimeoutRef = useRef<number | null>(null)
 
   const produtosControleEstoque = useMemo(
     () => produtos.filter((p) => p.tipoLancamento === 'controle_estoque' && p.ativo !== false),
@@ -105,8 +125,25 @@ export function Estoque({ onVoltar }: Props) {
 
   const custoKit = useMemo(() => calcularCustoKit(kitItens, produtos), [kitItens, produtos])
 
+  const produtosParaKit = useMemo(() => {
+    const q = produtoBuscaKit.trim()
+    const norm = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    const nq = norm(q)
+    return produtosControleEstoque
+      .filter((p) => (p.estoqueAtual ?? 0) > 0)
+      .filter((p) => {
+        if (!nq) return true
+        const hay = norm([p.descricao, p.codigoInterno, p.codigoFornecedor, p.codigoBarras].join(' '))
+        return hay.includes(nq)
+      })
+  }, [produtoBuscaKit, produtosControleEstoque])
+
   function refresh() {
     setProdutos(loadProdutos())
+  }
+
+  function refreshKits() {
+    setKits(loadKits())
   }
 
   useEffect(() => {
@@ -120,6 +157,19 @@ export function Estoque({ onVoltar }: Props) {
       window.removeEventListener('storage', onChanged)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    function onDataChanged(e: Event) {
+      const ce = e as CustomEvent<{ scope?: string }>
+      if (ce?.detail?.scope === 'kits') refreshKits()
+    }
+    window.addEventListener('pc:data-changed', onDataChanged as EventListener)
+    window.addEventListener('storage', onDataChanged)
+    return () => {
+      window.removeEventListener('pc:data-changed', onDataChanged as EventListener)
+      window.removeEventListener('storage', onDataChanged)
+    }
   }, [])
 
   useEffect(() => {
@@ -277,26 +327,154 @@ export function Estoque({ onVoltar }: Props) {
     setKitCompAberto(true)
   }
 
+  function consumoTotalPorProduto(itens: KitLinhaDraft[], qtd: number): Map<string, number> {
+    const m = new Map<string, number>()
+    const qk = Math.max(1, Math.trunc(qtd || 1))
+    for (const i of itens) {
+      const total = round2((i.quantidadePorKit || 0) * qk)
+      m.set(i.produtoId, round2((m.get(i.produtoId) ?? 0) + total))
+    }
+    return m
+  }
+
   function adicionarItemKit() {
     setErroKit(null)
     const pid = produtoAddId
     if (!pid) return
     const qtd = Math.max(1, round2(qtdAdd))
+    const consumoAtual = consumoTotalPorProduto(kitItens, qtdKits)
+    const p = produtos.find((x) => x.id === pid)
+    const estoque = round2(p?.estoqueAtual ?? 0)
+    const precisaAtual = round2(consumoAtual.get(pid) ?? 0)
+    const precisaNovo = round2((precisaAtual + qtd * Math.max(1, Math.trunc(qtdKits || 1))) as number)
+    if (estoque <= 0) {
+      setErroKit('Este produto não tem estoque disponível para entrar na composição do kit.')
+      return
+    }
+    if (precisaNovo > estoque) {
+      setErroKit('Estoque insuficiente para incluir este item considerando a quantidade de kits informada.')
+      return
+    }
     setKitItens((prev) => {
       const idx = prev.findIndex((x) => x.produtoId === pid)
       if (idx >= 0) {
         const next = [...prev]
         next[idx] = { ...next[idx], quantidadePorKit: round2(next[idx].quantidadePorKit + qtd) }
-        return next
+        return normalizarKitItens(next)
       }
-      return [...prev, { produtoId: pid, quantidadePorKit: qtd }]
+      return normalizarKitItens([...prev, { produtoId: pid, quantidadePorKit: qtd }])
     })
     setProdutoAddId('')
     setQtdAdd(1)
+    setProdutoBuscaKit('')
+    setProdutoDropdownAberto(false)
+    setProdutoActiveIdx(0)
+  }
+
+  function selecionarProdutoParaKit(pid: string) {
+    setProdutoAddId(pid)
+    const p = produtosControleEstoque.find((x) => x.id === pid)
+    setProdutoBuscaKit(p ? p.descricao : '')
+    setProdutoDropdownAberto(false)
+  }
+
+  function atualizarQtdItemKit(produtoId: string, qtdPorKit: number) {
+    const q = Math.max(0, round2(qtdPorKit))
+    if (q <= 0) {
+      removerItemKit(produtoId)
+      return
+    }
+    const p = produtos.find((x) => x.id === produtoId)
+    const estoque = round2(p?.estoqueAtual ?? 0)
+    if (estoque <= 0) {
+      setErroKit('Este produto não tem estoque disponível para permanecer na composição do kit.')
+      return
+    }
+    const qtdTotalKits = Math.max(1, Math.trunc(qtdKits || 1))
+    const consumoAtual = consumoTotalPorProduto(kitItens, qtdTotalKits)
+    const consumoSemEste = round2((consumoAtual.get(produtoId) ?? 0) - round2((kitItens.find((i) => i.produtoId === produtoId)?.quantidadePorKit ?? 0) * qtdTotalKits))
+    const consumoNovo = round2(consumoSemEste + round2(q * qtdTotalKits))
+    if (consumoNovo > estoque) {
+      setErroKit('Estoque insuficiente para aumentar a quantidade deste item com a quantidade de kits informada.')
+      return
+    }
+    setErroKit(null)
+    setKitItens((prev) =>
+      normalizarKitItens(prev.map((i) => (i.produtoId === produtoId ? { ...i, quantidadePorKit: q } : i))),
+    )
   }
 
   function removerItemKit(produtoId: string) {
-    setKitItens((prev) => prev.filter((x) => x.produtoId !== produtoId))
+    setKitItens((prev) => normalizarKitItens(prev.filter((x) => x.produtoId !== produtoId)))
+  }
+
+  const kitsCadastrados = useMemo(() => {
+    const q = kitBusca.trim()
+    const norm = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    const nq = norm(q)
+    const kitProdutos = produtosControleEstoque
+      .filter((p) => p.observacoes?.includes('KIT'))
+      .map((p) => ({
+        produto: p,
+        kit: kits.find((k) => k.produtoKitId === p.id) ?? null,
+      }))
+      .filter((x) => x.kit !== null) as { produto: Produto; kit: Kit }[]
+
+    if (!nq) return kitProdutos
+    return kitProdutos.filter(({ produto, kit }) => {
+      const hay = norm([produto.descricao, produto.codigoInterno, kit.nome].join(' '))
+      return hay.includes(nq)
+    })
+  }, [kitBusca, kits, produtosControleEstoque])
+
+  function carregarKitExistente(produtoKitId: string) {
+    const k = kits.find((x) => x.produtoKitId === produtoKitId) ?? null
+    const p = produtos.find((x) => x.id === produtoKitId) ?? null
+    if (!k || !p) return
+    setKitSelecionadoId(produtoKitId)
+    setKitNome(p.descricao.trim() || k.nome.trim())
+    setKitItens(
+      normalizarKitItens(k.itens.map((i) => ({ produtoId: i.produtoId, quantidadePorKit: round2(i.quantidade) }))),
+    )
+    setKitCriarComoNovo(false)
+    setErroKit(null)
+  }
+
+  function excluirQuantidadeDeKits(produtoKitId: string) {
+    const kitDef = kits.find((k) => k.produtoKitId === produtoKitId) ?? null
+    const kitProduto = produtos.find((p) => p.id === produtoKitId) ?? null
+    if (!kitDef || !kitProduto) {
+      window.alert('Não foi possível localizar a definição deste kit para devolver os itens ao estoque.')
+      return
+    }
+    const estoqueKit = Math.max(0, round2(kitProduto.estoqueAtual ?? 0))
+    if (estoqueKit <= 0) {
+      window.alert('Este kit não possui estoque para excluir.')
+      return
+    }
+    const resp = window.prompt(`Quantidade de kits a excluir (máx. ${estoqueKit}):`, '1')
+    const qtd = Math.max(0, Math.trunc(Number(resp) || 0))
+    if (!qtd) return
+    if (qtd > estoqueKit) {
+      window.alert('Quantidade inválida: maior que o estoque do kit.')
+      return
+    }
+    if (!window.confirm(`Excluir ${qtd} un. do kit “${kitProduto.descricao}” e devolver os componentes ao estoque?`)) return
+
+    const devolucao = new Map<string, number>()
+    for (const i of kitDef.itens) {
+      devolucao.set(i.produtoId, round2((devolucao.get(i.produtoId) ?? 0) + round2(i.quantidade * qtd)))
+    }
+
+    const lista = loadProdutos()
+    const next = lista.map((p) => {
+      if (p.id === produtoKitId) return { ...p, estoqueAtual: Math.max(0, round2((p.estoqueAtual || 0) - qtd)) }
+      const inc = devolucao.get(p.id)
+      if (!inc) return p
+      return { ...p, estoqueAtual: Math.max(0, round2((p.estoqueAtual || 0) + inc)) }
+    })
+    saveProdutos(next)
+    refresh()
   }
 
   function montarKit() {
@@ -307,11 +485,12 @@ export function Estoque({ onVoltar }: Props) {
       return
     }
     const qtd = Math.max(1, Math.trunc(qtdKits || 1))
-    if (kitItens.length === 0) {
+    const itensNorm = normalizarKitItens(kitItens)
+    if (itensNorm.length === 0) {
       setErroKit('Adicione ao menos 1 produto ao kit.')
       return
     }
-    const valida = disponibilidadeOk(kitItens, produtos, qtd)
+    const valida = disponibilidadeOk(itensNorm, produtos, qtd)
     if (!valida.ok) {
       setErroKit('Estoque insuficiente para montar este kit com a quantidade informada.')
       return
@@ -319,11 +498,21 @@ export function Estoque({ onVoltar }: Props) {
 
     // Debita estoque dos componentes e cria/atualiza o produto do kit
     const lista = loadProdutos()
-    const custo = calcularCustoKit(kitItens, lista)
+    const custo = calcularCustoKit(itensNorm, lista)
     const codigoInterno = gerarProximoCodigoInterno(lista)
 
-    // tenta reusar kit existente por descrição exata (simples, pode ser evoluído)
-    const existente = lista.find((p) => p.tipoLancamento === 'controle_estoque' && p.descricao.trim() === nome)
+    const selecionado = kitSelecionadoId ? lista.find((p) => p.id === kitSelecionadoId) ?? null : null
+
+    // Regra de reuso:
+    // - Se há kit selecionado e NÃO está “criar como novo”, atualiza esse produto-kit (inclui renomear descrição).
+    // - Senão, se NÃO está “criar como novo”, tenta reusar por descrição exata (fallback).
+    // - Se está “criar como novo”, sempre cria um novo produto-kit.
+    const existente =
+      selecionado && !kitCriarComoNovo
+        ? selecionado
+        : !kitCriarComoNovo
+          ? lista.find((p) => p.tipoLancamento === 'controle_estoque' && p.descricao.trim() === nome) ?? null
+          : null
 
     const kitProdutoId = existente?.id ?? crypto.randomUUID()
     const kitCodigo = existente?.codigoInterno?.trim() ? existente.codigoInterno : codigoInterno
@@ -367,7 +556,7 @@ export function Estoque({ onVoltar }: Props) {
 
     // aplica débitos
     const debitados = new Map<string, number>()
-    for (const i of kitItens) {
+    for (const i of itensNorm) {
       debitados.set(i.produtoId, round2((debitados.get(i.produtoId) ?? 0) + i.quantidadePorKit * qtd))
     }
 
@@ -383,16 +572,20 @@ export function Estoque({ onVoltar }: Props) {
     saveProdutos(final)
 
     // persiste definição do kit
-    addKit({
-      produtoKitId: kitProdutoId,
+    upsertKitByProdutoKitId(kitProdutoId, {
       nome,
-      itens: kitItens.map((i) => ({ produtoId: i.produtoId, quantidade: i.quantidadePorKit })),
+      itens: itensNorm.map((i) => ({ produtoId: i.produtoId, quantidade: i.quantidadePorKit })),
+      estoqueComprometido: true,
     })
 
     setKitNome('')
     setQtdKits(1)
     setKitItens([])
+    setKitBusca('')
+    setKitSelecionadoId('')
+    setKitCriarComoNovo(false)
     refresh()
+    refreshKits()
     setTab('visao')
   }
 
@@ -531,13 +724,23 @@ export function Estoque({ onVoltar }: Props) {
                               Editar
                             </button>
                             {p.observacoes?.includes('KIT') ? (
-                              <button
-                                type="button"
-                                onClick={() => abrirEditarComposicaoKit(p)}
-                                className="rounded-xl border border-[var(--accent)] bg-teal-50/80 px-3 py-2 text-xs font-semibold text-teal-900 hover:bg-teal-100/80"
-                              >
-                                Composição
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => abrirEditarComposicaoKit(p)}
+                                  className="rounded-xl border border-[var(--accent)] bg-teal-50/80 px-3 py-2 text-xs font-semibold text-teal-900 hover:bg-teal-100/80"
+                                >
+                                  Composição
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => excluirQuantidadeDeKits(p.id)}
+                                  className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800 hover:bg-red-100/80"
+                                  title="Exclui uma quantidade do kit e devolve os componentes ao estoque"
+                                >
+                                  Excluir kits
+                                </button>
+                              </>
                             ) : null}
                           </div>
                         </td>
@@ -550,6 +753,48 @@ export function Estoque({ onVoltar }: Props) {
           </div>
         ) : tab === 'kit' ? (
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-5 shadow-sm space-y-4">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 p-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-1">
+                    Reutilizar kit existente (carregar composição)
+                  </label>
+                  <input
+                    type="search"
+                    value={kitBusca}
+                    onChange={(e) => setKitBusca(e.target.value)}
+                    placeholder="Buscar kit por nome/código…"
+                    className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-1">
+                    Selecionar
+                  </label>
+                  <select
+                    value={kitSelecionadoId}
+                    onChange={(e) => {
+                      const id = e.target.value
+                      setKitSelecionadoId(id)
+                      if (id) carregarKitExistente(id)
+                      else setKitCriarComoNovo(false)
+                    }}
+                    className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {kitsCadastrados.slice(0, 200).map(({ produto, kit }) => (
+                      <option key={produto.id} value={produto.id}>
+                        {produto.descricao} · {produto.codigoInterno || '—'} · Estq. {produto.estoqueAtual} · {kit.itens.length} itens
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                    Mostrando {Math.min(200, kitsCadastrados.length)} de {kitsCadastrados.length}.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-[var(--text)] mb-1.5">Nome/descrição do kit</label>
@@ -560,6 +805,38 @@ export function Estoque({ onVoltar }: Props) {
                   className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
                   placeholder="Ex.: Kit freio + cabos"
                 />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setKitCriarComoNovo((v) => !v)}
+                    className={`rounded-xl px-3 py-2 text-xs font-semibold border ${
+                      kitCriarComoNovo
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-[var(--text)] border-[var(--border)] hover:bg-[var(--surface)]'
+                    }`}
+                    title={
+                      kitCriarComoNovo
+                        ? 'Criar um NOVO produto-kit com esta composição'
+                        : 'Atualizar o kit selecionado (se houver) ou reaproveitar por nome exato'
+                    }
+                  >
+                    {kitCriarComoNovo ? 'Criando como novo kit' : 'Criar como novo kit'}
+                  </button>
+                  {kitSelecionadoId && !kitCriarComoNovo ? (
+                    <span className="text-[11px] text-[var(--text-muted)]">
+                      Modo atual: <strong className="text-[var(--text)]">atualizar kit selecionado</strong> (renomeia a descrição se você alterar o
+                      nome).
+                    </span>
+                  ) : kitSelecionadoId && kitCriarComoNovo ? (
+                    <span className="text-[11px] text-[var(--text-muted)]">
+                      Modo atual: <strong className="text-[var(--text)]">novo kit</strong> (o kit original não será alterado).
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-[var(--text-muted)]">
+                      Dica: selecione um kit para editar/renomear, ou ative “Criar como novo kit” para duplicar composição.
+                    </span>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-[var(--text)] mb-1.5">Quantidade de kits</label>
@@ -568,7 +845,11 @@ export function Estoque({ onVoltar }: Props) {
                   min={1}
                   step={1}
                   value={qtdKits}
-                  onChange={(e) => setQtdKits(Math.max(1, Math.trunc(Number(e.target.value) || 1)))}
+                  onChange={(e) => {
+                    const v = Math.max(1, Math.trunc(Number(e.target.value) || 1))
+                    setQtdKits(v)
+                    setErroKit(null)
+                  }}
                   className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm tabular-nums"
                 />
               </div>
@@ -579,18 +860,91 @@ export function Estoque({ onVoltar }: Props) {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
                 <div className="md:col-span-2">
                   <label className="block text-xs font-medium text-[var(--text)] mb-1">Produto</label>
-                  <select
-                    value={produtoAddId}
-                    onChange={(e) => setProdutoAddId(e.target.value)}
-                    className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">Selecione…</option>
-                    {produtosControleEstoque.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.descricao} · Estq. {p.estoqueAtual}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <input
+                      role="combobox"
+                      aria-expanded={produtoDropdownAberto}
+                      aria-controls="estoque-kit-produtos-list"
+                      aria-autocomplete="list"
+                      type="text"
+                      value={produtoBuscaKit}
+                      onChange={(e) => {
+                        setProdutoBuscaKit(e.target.value)
+                        setProdutoDropdownAberto(true)
+                        setProdutoActiveIdx(0)
+                        setProdutoAddId('')
+                      }}
+                      onFocus={() => setProdutoDropdownAberto(true)}
+                      onBlur={() => {
+                        if (produtoBlurTimeoutRef.current) window.clearTimeout(produtoBlurTimeoutRef.current)
+                        produtoBlurTimeoutRef.current = window.setTimeout(() => setProdutoDropdownAberto(false), 120)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault()
+                          setProdutoDropdownAberto(true)
+                          setProdutoActiveIdx((i) => Math.min(i + 1, Math.max(0, produtosParaKit.length - 1)))
+                          return
+                        }
+                        if (e.key === 'ArrowUp') {
+                          e.preventDefault()
+                          setProdutoDropdownAberto(true)
+                          setProdutoActiveIdx((i) => Math.max(i - 1, 0))
+                          return
+                        }
+                        if (e.key === 'Enter') {
+                          if (!produtoDropdownAberto) return
+                          e.preventDefault()
+                          const p = produtosParaKit[produtoActiveIdx]
+                          if (p) selecionarProdutoParaKit(p.id)
+                          return
+                        }
+                        if (e.key === 'Escape') {
+                          setProdutoDropdownAberto(false)
+                        }
+                      }}
+                      placeholder="Digite para buscar e selecionar…"
+                      className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                    />
+
+                    {produtoDropdownAberto ? (
+                      <div
+                        id="estoque-kit-produtos-list"
+                        role="listbox"
+                        className="absolute z-20 mt-1 w-full overflow-auto max-h-64 rounded-xl border border-[var(--border)] bg-white shadow-lg"
+                      >
+                        {produtosParaKit.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-[var(--text-muted)]">
+                            Nenhum produto encontrado (somente estoque &gt; 0).
+                          </div>
+                        ) : (
+                          produtosParaKit.slice(0, 160).map((p, idx) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              role="option"
+                              aria-selected={idx === produtoActiveIdx}
+                              onMouseDown={(ev) => ev.preventDefault()}
+                              onClick={() => selecionarProdutoParaKit(p.id)}
+                              onMouseEnter={() => setProdutoActiveIdx(idx)}
+                              className={`w-full text-left px-3 py-2 text-sm border-b border-[var(--border)]/60 last:border-b-0 ${
+                                idx === produtoActiveIdx ? 'bg-[var(--surface)]' : 'bg-white'
+                              }`}
+                            >
+                              <div className="font-medium text-[var(--text)]">{p.descricao}</div>
+                              <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                                {p.codigoInterno ? `Cód. ${p.codigoInterno} · ` : ''}
+                                Estq. {p.estoqueAtual ?? 0}
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                  <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                    Busque por descrição, código interno, SKU ou código de barras. Apenas produtos com estoque &gt; 0 são listados.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-[var(--text)] mb-1">Qtd por kit</label>
@@ -637,7 +991,17 @@ export function Estoque({ onVoltar }: Props) {
                               {p.descricao}{' '}
                               <span className="text-xs text-[var(--text-muted)]">· Estq. {p.estoqueAtual}</span>
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">{i.quantidadePorKit}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={i.quantidadePorKit}
+                                onChange={(e) => atualizarQtdItemKit(i.produtoId, Number(e.target.value))}
+                                className="w-24 rounded-lg border border-[var(--border)] bg-white px-2 py-1 text-sm tabular-nums text-right"
+                                title="Ajuste a quantidade por kit (0 remove o item)"
+                              />
+                            </td>
                             <td className="px-3 py-2 text-right tabular-nums">{consumo}</td>
                             <td className="px-3 py-2 text-right">
                               <button
@@ -672,6 +1036,13 @@ export function Estoque({ onVoltar }: Props) {
                     setQtdKits(1)
                     setKitItens([])
                     setErroKit(null)
+                    setKitBusca('')
+                    setKitSelecionadoId('')
+                    setKitCriarComoNovo(false)
+                    setProdutoAddId('')
+                    setProdutoBuscaKit('')
+                    setProdutoDropdownAberto(false)
+                    setProdutoActiveIdx(0)
                   }}
                   className="rounded-xl border border-[var(--border)] bg-white px-4 py-2 text-sm font-medium text-[var(--text)]"
                 >
@@ -680,6 +1051,7 @@ export function Estoque({ onVoltar }: Props) {
                 <button
                   type="button"
                   onClick={montarKit}
+                  disabled={!disponibilidadeOk(kitItens, produtos, Math.max(1, qtdKits)).ok}
                   className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-hover)]"
                 >
                   Confirmar montagem (debitar estoque)

@@ -28,7 +28,7 @@ function App() {
       try {
         await hydrateAppFromSupabase()
       } catch (err) {
-        // Offline / env ausente na build / erro de rede ou permissão no Postgres.
+        // Erro de rede, permissão, ou Supabase não configurado.
         console.error('[Pedal Construtivo] Falha ao sincronizar com Supabase:', err)
       }
     })()
@@ -38,23 +38,38 @@ function App() {
     return () => window.removeEventListener('pc:data-changed', onAnyChange as EventListener)
   }, [])
 
-  const avisoSupabaseSemEnv =
-    DATA_MODE === 'supabase' && supabase === null && import.meta.env.PROD
+  const supabaseNaoConfigurado = DATA_MODE === 'supabase' && supabase === null
 
-  const bannerSupabaseDeploy =
-    avisoSupabaseSemEnv ? (
-      <div className="fixed inset-x-0 top-0 z-[9999] border-b border-amber-300 bg-amber-50 px-4 py-3 text-center text-sm text-amber-950 shadow-sm">
-        <strong>Supabase não configurado neste deploy.</strong> Defina{' '}
-        <code className="rounded bg-amber-100 px-1">VITE_SUPABASE_URL</code> e{' '}
-        <code className="rounded bg-amber-100 px-1">VITE_SUPABASE_ANON_KEY</code> na Vercel (Production e
-        Preview) e faça um <strong>Redeploy</strong>. Sem isso, não há persistência de dados.
+  if (supabaseNaoConfigurado) {
+    return (
+      <div className="min-h-screen bg-[var(--surface)] flex items-center justify-center p-6">
+        <div className="w-full max-w-2xl rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Configuração obrigatória</p>
+          <h1 className="mt-1 text-lg font-bold text-amber-950">Supabase não configurado</h1>
+          <p className="mt-2 text-sm text-amber-950">
+            Este sistema opera em modo <strong>Supabase-only</strong>. Para rodar (dev e produção), defina:
+          </p>
+          <ul className="mt-3 list-disc pl-5 text-sm text-amber-950 space-y-1">
+            <li>
+              <code className="rounded bg-amber-100 px-1">VITE_SUPABASE_URL</code>
+            </li>
+            <li>
+              <code className="rounded bg-amber-100 px-1">VITE_SUPABASE_ANON_KEY</code>
+            </li>
+          </ul>
+          <p className="mt-3 text-xs text-amber-900">
+            Local: crie um <code className="rounded bg-amber-100 px-1">.env.local</code> baseado no{' '}
+            <code className="rounded bg-amber-100 px-1">.env.example</code>. Na Vercel: configure as mesmas variáveis
+            (Production e Preview) e faça redeploy.
+          </p>
+        </div>
       </div>
-    ) : null
+    )
+  }
 
   if (tela === 'produtos') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <GestaoProdutos onVoltar={() => setTela('inicio')} />
       </>
     )
@@ -63,7 +78,6 @@ function App() {
   if (tela === 'estoque') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <Estoque onVoltar={() => setTela('inicio')} />
       </>
     )
@@ -72,7 +86,6 @@ function App() {
   if (tela === 'tipos-produto') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <GestaoTiposProduto onVoltar={() => setTela('inicio')} />
       </>
     )
@@ -81,7 +94,6 @@ function App() {
   if (tela === 'clientes') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <GestaoClientes onVoltar={() => setTela('inicio')} />
       </>
     )
@@ -90,7 +102,6 @@ function App() {
   if (tela === 'fornecedores') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <GestaoFornecedores onVoltar={() => setTela('inicio')} />
       </>
     )
@@ -99,7 +110,6 @@ function App() {
   if (tela === 'vender') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <VendaFlow onSair={() => setTela('inicio')} />
       </>
     )
@@ -108,7 +118,6 @@ function App() {
   if (tela === 'caixa') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <FechamentoCaixa onVoltar={() => setTela('inicio')} />
       </>
     )
@@ -117,7 +126,6 @@ function App() {
   if (tela === 'inicio') {
     return (
       <>
-        {bannerSupabaseDeploy}
         <Inicio
           onOpenPrototype={() => setTela('legado')}
           onOpenProdutos={() => setTela('produtos')}
@@ -134,7 +142,6 @@ function App() {
 
   return (
     <>
-      {bannerSupabaseDeploy}
       <Layout tab={tab} onTab={setTab} onIrParaInicio={() => setTela('inicio')}>
         {tab === 'fornecedores' && <Fornecedores />}
         {tab === 'cotacao' && <Cotacao fornecedores={fornecedores} />}

@@ -45,6 +45,8 @@ export function saveProdutos(produtos: Produto[]): void {
   produtosCache = migrarCodigosInternoSeNecessario(produtos)
   window.dispatchEvent(new CustomEvent('pc:produtos-changed'))
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'produtos' } }))
+  // Supabase é a fonte única de verdade: persiste as mudanças.
+  void sbUpsertProdutos(produtosCache)
 }
 
 function novoId(): string {
