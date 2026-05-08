@@ -1,4 +1,5 @@
 import type { RegistroMovimentacao, RegistroOrcamentoHistorico, RegistroVendaHistorico } from '../types'
+import { diaLocalDeIso, formatarDiaLocal } from './datasLocal'
 import { round2 } from './moeda'
 
 export type ModoRelatorio = 'finalizadas' | 'aberto' | 'lucratividade'
@@ -40,12 +41,8 @@ export interface LinhaRelatorioVendas {
   formasPagamento: string
 }
 
-function isoDia(iso: string): string {
-  return iso.slice(0, 10)
-}
-
 function entreDatas(iso: string, ini: string, fim: string): boolean {
-  const d = isoDia(iso)
+  const d = diaLocalDeIso(iso)
   return d >= ini && d <= fim
 }
 
@@ -114,7 +111,7 @@ export function montarLinhasRelatorio(
   const linhas: LinhaRelatorioVendas[] = []
 
   for (const r of registros) {
-    const data = isoDia(r.emitidoEmIso)
+    const data = diaLocalDeIso(r.emitidoEmIso)
     const cliente = r.clienteNome ?? '—'
     const doc = r.numeroDocumento
 
@@ -377,17 +374,15 @@ export function datasPorPreset(preset: PresetIntervalo): { inicio: string; fim: 
   const m = hoje.getMonth()
   const d = hoje.getDate()
 
-  const fmt = (dt: Date) => dt.toISOString().slice(0, 10)
-
   if (preset === 'mes') {
     const ini = new Date(y, m, 1)
     const fim = new Date(y, m + 1, 0)
-    return { inicio: fmt(ini), fim: fmt(fim) }
+    return { inicio: formatarDiaLocal(ini), fim: formatarDiaLocal(fim) }
   }
   if (preset === 'ano') {
     const ini = new Date(y, 0, 1)
     const fim = new Date(y, 11, 31)
-    return { inicio: fmt(ini), fim: fmt(fim) }
+    return { inicio: formatarDiaLocal(ini), fim: formatarDiaLocal(fim) }
   }
   if (preset === 'semana') {
     const cur = new Date(y, m, d)
@@ -395,9 +390,9 @@ export function datasPorPreset(preset: PresetIntervalo): { inicio: string; fim: 
     const diff = dow === 0 ? 6 : dow - 1
     const ini = new Date(cur)
     ini.setDate(cur.getDate() - diff)
-    return { inicio: fmt(ini), fim: fmt(hoje) }
+    return { inicio: formatarDiaLocal(ini), fim: formatarDiaLocal(hoje) }
   }
   const ini = new Date(y, m, 1)
   const fim = new Date(y, m + 1, 0)
-  return { inicio: fmt(ini), fim: fmt(fim) }
+  return { inicio: formatarDiaLocal(ini), fim: formatarDiaLocal(fim) }
 }

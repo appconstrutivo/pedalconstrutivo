@@ -7,10 +7,11 @@ import { RelatoriosDropdown } from '../components/RelatoriosDropdown'
 import { ModalRelatorioMovimentacaoVendas } from '../components/ModalRelatorioMovimentacaoVendas'
 import { ModalSegundaViaRecibo } from '../components/ModalSegundaViaRecibo'
 import { ModalCancelarVendaRealizada } from '../components/ModalCancelarVendaRealizada'
+import { ModalRecuperacaoDados } from '../components/ModalRecuperacaoDados'
 import { ReciboVenda } from '../components/ReciboVenda'
 import type { ItemLancamentoVenda } from '../types'
 import { hydrateAppFromSupabase } from '../supabase/hydrate'
-import { supabase } from '../lib/supabaseClient'
+import { SUPABASE_URL, supabase } from '../lib/supabaseClient'
 
 type InicioProps = {
   onOpenPrototype: () => void
@@ -171,6 +172,7 @@ export function Inicio({
   onOpenCaixa,
 }: InicioProps) {
   const [relatorioVendasAberto, setRelatorioVendasAberto] = useState(false)
+  const [recuperacaoAberto, setRecuperacaoAberto] = useState(false)
   const [modalSegundaVia, setModalSegundaVia] = useState(false)
   const [modalCancelarVenda, setModalCancelarVenda] = useState(false)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'ok' | 'error'>('idle')
@@ -187,6 +189,15 @@ export function Inicio({
     month: 'long',
     year: 'numeric',
   }).format(new Date())
+
+  const supabaseHost = (() => {
+    if (!SUPABASE_URL) return null
+    try {
+      return new URL(SUPABASE_URL).hostname
+    } catch {
+      return SUPABASE_URL
+    }
+  })()
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--surface)]">
@@ -245,9 +256,18 @@ export function Inicio({
                       </span>
                       <button
                         type="button"
-                        disabled
-                        title="Em breve — telas em construção"
-                        className="whitespace-nowrap rounded px-1 py-0.5 text-left text-[var(--text-muted)] cursor-not-allowed opacity-90 hover:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1"
+                        disabled={item.id !== 'utilitarios'}
+                        title={
+                          item.id === 'utilitarios'
+                            ? 'Recuperar vendas do armazenamento local para o Supabase'
+                            : 'Em breve — telas em construção'
+                        }
+                        onClick={item.id === 'utilitarios' ? () => setRecuperacaoAberto(true) : undefined}
+                        className={
+                          item.id === 'utilitarios'
+                            ? 'whitespace-nowrap rounded px-1 py-0.5 text-left text-[var(--accent)] font-medium hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1'
+                            : 'whitespace-nowrap rounded px-1 py-0.5 text-left text-[var(--text-muted)] cursor-not-allowed opacity-90 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1'
+                        }
                       >
                         {item.label}
                       </button>
@@ -259,6 +279,8 @@ export function Inicio({
           </div>
         </nav>
       </header>
+
+      <ModalRecuperacaoDados aberto={recuperacaoAberto} onFechar={() => setRecuperacaoAberto(false)} />
 
       <ModalRelatorioMovimentacaoVendas
         aberto={relatorioVendasAberto}
@@ -420,7 +442,10 @@ export function Inicio({
               </button>
             )}
             <span className="font-mono sm:text-right">
-              Conexão: {supabase !== null ? 'Supabase configurado' : 'sem variáveis de ambiente'}
+              Conexão:{' '}
+              {supabase !== null
+                ? `Supabase configurado${supabaseHost ? ` (${supabaseHost})` : ''}`
+                : 'sem variáveis de ambiente'}
             </span>
           </span>
         </div>

@@ -13,6 +13,7 @@ import { saveTiposProduto } from '../store/tiposProduto'
 import { aplicarHidratacaoTurnosCaixa, type TurnoCaixaSbRow } from '../store/turnoCaixa'
 import { fetchTodasMovimentacoesSupabase } from './historico'
 import { subtotalLinhaPdv } from '../utils/moeda'
+import { lerSnapshotMovimentacoesDoNavegador } from '../utils/localMovimentacaoBackup'
 
 function enabled(): boolean {
   return DATA_MODE === 'supabase' && supabase !== null
@@ -143,7 +144,21 @@ export async function hydrateCadastrosFromSupabase(): Promise<void> {
 export async function hydrateHistoricoFromSupabase(): Promise<void> {
   if (!enabled()) return
   const regs = await fetchTodasMovimentacoesSupabase()
-  replaceRegistrosMovimentacaoCache(regs)
+  // Protege contra “perda” de dados locais ainda não enviados:
+  // se houver um snapshot no navegador com registros que não estão no Supabase,
+  // mescla mantendo o Supabase como fonte preferencial para ids repetidos.
+  const localSnapshot = lerSnapshotMovimentacoesDoNavegador()
+  if (localSnapshot.length === 0) {
+    replaceRegistrosMovimentacaoCache(regs)
+    return
+  }
+
+  const byId = new Map<string, (typeof regs)[number]>()
+  for (const r of regs) byId.set(r.id, r)
+  for (const r of localSnapshot) {
+    if (!byId.has(r.id)) byId.set(r.id, r)
+  }
+  replaceRegistrosMovimentacaoCache(Array.from(byId.values()))
 }
 
 function mapRascunhoItemSb(row: Record<string, unknown>): ItemLancamentoVenda | null {

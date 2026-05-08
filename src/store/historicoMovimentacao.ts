@@ -6,12 +6,14 @@ import type {
   RegistroVendaHistorico,
 } from '../types'
 import { upsertMovimentacao as sbUpsertMovimentacao } from '../supabase/pcApi'
+import { agendarSnapshotMovimentacoesNoNavegador } from '../utils/localMovimentacaoBackup'
 
 /** Cache em memória — preenchido pela hidratação do Supabase. */
 let movimentacaoCache: RegistroMovimentacao[] = []
 
 export function replaceRegistrosMovimentacaoCache(lista: RegistroMovimentacao[]): void {
   movimentacaoCache = lista
+  agendarSnapshotMovimentacoesNoNavegador(lista)
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'historico-movimentacao' } }))
 }
 
@@ -47,6 +49,7 @@ export function obterRegistroVendaPorDocumento(numeroDocumento: string): Registr
 
 function save(lista: RegistroMovimentacao[]): void {
   movimentacaoCache = lista
+  agendarSnapshotMovimentacoesNoNavegador(lista)
   window.dispatchEvent(new CustomEvent('pc:data-changed', { detail: { scope: 'historico-movimentacao' } }))
 }
 

@@ -1,5 +1,6 @@
 import { DATA_MODE } from '../config/dataMode'
 import { supabase } from '../lib/supabaseClient'
+import { limitesUtcIntervaloDatasLocais } from '../utils/datasLocal'
 import type { RegistroMovimentacao, RegistroOrcamentoHistorico, RegistroVendaHistorico } from '../types'
 
 type PcMovRow = {
@@ -90,9 +91,8 @@ export async function fetchRegistrosMovimentacaoFromSupabase(p: {
 
   const sb = supabase!
 
-  // Intervalo inclusivo por dia (YYYY-MM-DD).
-  const ini = `${p.dataInicioYYYYMMDD}T00:00:00.000Z`
-  const fim = `${p.dataFimYYYYMMDD}T23:59:59.999Z`
+  // Intervalo inclusivo por dia no calendário local do operador (evita perder vendas perto da meia-noite).
+  const { ini, fim } = limitesUtcIntervaloDatasLocais(p.dataInicioYYYYMMDD, p.dataFimYYYYMMDD)
 
   const movRes = await sb
     .from('pc_movimentacoes')

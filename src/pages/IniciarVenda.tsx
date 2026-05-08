@@ -29,6 +29,7 @@ import {
   type OrcamentoRascunho,
 } from '../store/orcamentosRascunho'
 import { formatarBrl } from '../utils/moeda'
+import { diaLocalDeIso } from '../utils/datasLocal'
 
 type Props = {
   modo: ModoLancamentoVenda
@@ -82,7 +83,7 @@ export function IniciarVenda({ modo, onModo, onContinuar, onAbrirPdvComBootstrap
     return loadRegistrosMovimentacao()
       .filter((r): r is RegistroVendaHistorico => r.kind === 'venda')
       .filter((v) => !v.cancelamento?.canceladoEmIso)
-      .filter((v) => (v.emitidoEmIso || '').slice(0, 10) === dataRef)
+      .filter((v) => diaLocalDeIso(v.emitidoEmIso || '') === dataRef)
       .sort((a, b) => (a.emitidoEmIso < b.emitidoEmIso ? 1 : -1))
       .slice(0, 50)
   }, [listaOrcamentosVersao, turnoHoje?.dataReferencia])
