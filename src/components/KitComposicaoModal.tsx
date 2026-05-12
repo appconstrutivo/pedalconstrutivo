@@ -8,7 +8,13 @@ type Props = {
   aberto: boolean
   produtoKit: Produto | null
   kitAtual: Kit | null
+  /** Lista usada no autocomplete ao adicionar itens (ex.: só controle de estoque ativo). */
   produtosDisponiveis: Produto[]
+  /**
+   * Catálogo para resolver nome/custo de linhas já gravadas no kit.
+   * Se omitido, usa só `produtosDisponiveis` — itens cujo componente saiu dessa lista ficam invisíveis na tabela.
+   */
+  produtosResolucao?: Produto[]
   /**
    * Ajusta estoque do produto componente em tempo real (delta pode ser negativo).
    * Deve retornar false quando não for possível (ex.: estoque insuficiente).
@@ -33,6 +39,7 @@ export function KitComposicaoModal({
   produtoKit,
   kitAtual,
   produtosDisponiveis,
+  produtosResolucao,
   onAjustarEstoque,
   onFechar,
   onSalvar,
@@ -82,7 +89,8 @@ export function KitComposicaoModal({
     }
   }, [aberto, kitIdKey, kitAtual, onAjustarEstoque, produtoKit])
 
-  const custo = useMemo(() => custoKit(itens, produtosDisponiveis), [itens, produtosDisponiveis])
+  const catalogoResolucao = produtosResolucao ?? produtosDisponiveis
+  const custo = useMemo(() => custoKit(itens, catalogoResolucao), [itens, catalogoResolucao])
   const produtosFiltrados = useMemo(() => {
     const q = produtoBusca.trim()
     const norm = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -342,8 +350,31 @@ export function KitComposicaoModal({
                     </tr>
                   ) : (
                     itens.map((i) => {
-                      const p = produtosDisponiveis.find((x) => x.id === i.produtoId)
-                      if (!p) return null
+                      const p = catalogoResolucao.find((x) => x.id === i.produtoId)
+                      if (!p) {
+                        return (
+                          <tr key={i.produtoId} className="border-b border-amber-200/80 bg-amber-50/50">
+                            <td className="px-3 py-2 text-sm text-amber-950">
+                              <span className="font-mono text-xs">{i.produtoId}</span>
+                              <div className="text-xs text-amber-900/90 mt-0.5">
+                                Componente não encontrado (excluído, inativo ou fora de controle de estoque). Remova e
+                                adicione o substituto.
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">{i.quantidade}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-[var(--text-muted)]">—</td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => remover(i.produtoId)}
+                                className="rounded-lg border border-[var(--border)] bg-white px-2 py-1 text-xs"
+                              >
+                                Remover
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      }
                       const linha = round2((p.valorCusto || 0) * i.quantidade)
                       return (
                         <tr key={i.produtoId} className="border-b border-[var(--border)]/70">

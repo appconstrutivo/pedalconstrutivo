@@ -1384,6 +1384,7 @@ export function Estoque({ onVoltar }: Props) {
         produtoKit={produtoEditar}
         kitAtual={kitAtual}
         produtosDisponiveis={produtosControleEstoque}
+        produtosResolucao={produtos}
         onAjustarEstoque={ajustarEstoqueDelta}
         onFechar={() => setKitCompAberto(false)}
         onSalvar={(draft) => {
