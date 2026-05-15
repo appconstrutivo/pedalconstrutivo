@@ -5,12 +5,14 @@ import type {
   Cliente,
   DadosPagamentoVenda,
   ItemLancamentoVenda,
+  ModoBuscaClienteVenda,
   ModoLancamentoVenda,
   PdvBootstrap,
   Produto,
 } from '../types'
+import { filtrarClientesVenda } from '../utils/buscaClienteVenda'
 import { baixarEstoquePorVenda, loadProdutos } from '../store/produtos'
-import { appendRegistroOrcamento, appendRegistroVenda, itensParaHistorico } from '../store/historicoMovimentacao'
+import { appendRegistroVenda, itensParaHistorico } from '../store/historicoMovimentacao'
 import { removeOrcamentoRascunho, upsertOrcamentoRascunho } from '../store/orcamentosRascunho'
 import { acumularVendaNoTurnoAtual } from '../store/turnoCaixa'
 import { formatarBrl, subtotalLinhaPdv } from '../utils/moeda'
@@ -62,6 +64,8 @@ function gerarNumeroDocumento(): string {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 }
 
+const ROTULO_CLIENTE_BALCAO = 'Cliente de Balcão'
+
 export function PdvLancamento({
   modo,
   cliente,
@@ -89,12 +93,24 @@ export function PdvLancamento({
   const [observacoesVenda, setObservacoesVenda] = useState(() => pdvSeed?.observacoes ?? '')
   const [rascunhoAtualId, setRascunhoAtualId] = useState<string | null>(() => pdvSeed?.rascunhoId ?? null)
 
+  const [clienteAtual, setClienteAtual] = useState<Cliente | null>(() => cliente)
+  const [clienteNomeFallbackAtual, setClienteNomeFallbackAtual] = useState<string | null>(
+    () => clienteNomeFallback ?? null,
+  )
+  const [clienteBusca, setClienteBusca] = useState(() => cliente?.nome?.trim() ?? clienteNomeFallback?.trim() ?? '')
+  const [clienteModoBusca, setClienteModoBusca] = useState<ModoBuscaClienteVenda>('nome')
+  const [clienteDropdownAberto, setClienteDropdownAberto] = useState(false)
+  const [clienteActiveIdx, setClienteActiveIdx] = useState(0)
+  const [clientesListaVersao, setClientesListaVersao] = useState(0)
+
   const [pagamentoAberto, setPagamentoAberto] = useState(false)
   const [dialogImpressao, setDialogImpressao] = useState(false)
   const [reciboAberto, setReciboAberto] = useState(false)
+  const [reciboPreviewAberto, setReciboPreviewAberto] = useState(false)
   const [imprimirAoAbrirRecibo, setImprimirAoAbrirRecibo] = useState(false)
   const [dadosPagamento, setDadosPagamento] = useState<DadosPagamentoVenda | null>(null)
   const [numeroDocumento, setNumeroDocumento] = useState('')
+  const [numeroDocumentoPreview, setNumeroDocumentoPreview] = useState('')
   const [dataEmissaoRecibo, setDataEmissaoRecibo] = useState(() => new Date())
 
   const produtoSelecionado = useMemo(
@@ -149,10 +165,68 @@ export function PdvLancamento({
   const dataStr = useMemo(() => new Date().toLocaleDateString('pt-BR'), [])
   const controleId = useMemo(() => String(Date.now()), [])
 
+  const clientesFiltrados = useMemo(() => {
+    void clientesListaVersao
+    return filtrarClientesVenda(clienteBusca, clienteModoBusca)
+  }, [clienteBusca, clienteModoBusca, clientesListaVersao])
+
+  useEffect(() => {
+    const onData = (e: Event) => {
+      const scope = (e as CustomEvent<{ scope?: string }>).detail?.scope
+      if (!scope || scope === 'clientes') setClientesListaVersao((v) => v + 1)
+    }
+    window.addEventListener('pc:data-changed', onData)
+    return () => window.removeEventListener('pc:data-changed', onData)
+  }, [])
+
   const nomeClienteExibicao = useMemo(
-    () => cliente?.nome?.trim() || clienteNomeFallback?.trim() || '',
-    [cliente, clienteNomeFallback],
+    () => clienteAtual?.nome?.trim() || clienteNomeFallbackAtual?.trim() || '',
+    [clienteAtual, clienteNomeFallbackAtual],
   )
+
+  function selecionarCliente(c: Cliente) {
+    setClienteAtual(c)
+    setClienteNomeFallbackAtual(null)
+    setClienteBusca(c.nome)
+    setClienteDropdownAberto(false)
+  }
+
+  function usarClienteBalcao() {
+    setClienteAtual(null)
+    setClienteNomeFallbackAtual(ROTULO_CLIENTE_BALCAO)
+    setClienteBusca(ROTULO_CLIENTE_BALCAO)
+    setClienteDropdownAberto(false)
+  }
+
+  function limparCliente() {
+    setClienteAtual(null)
+    setClienteNomeFallbackAtual(null)
+    setClienteBusca('')
+    setClienteDropdownAberto(false)
+  }
+
+  function aplicarNomeAvulso() {
+    const nome = clienteBusca.trim()
+    if (!nome) {
+      limparCliente()
+      return
+    }
+    setClienteAtual(null)
+    setClienteNomeFallbackAtual(nome)
+    setClienteDropdownAberto(false)
+  }
+
+  function imprimirOrcamentoAtual(imprimirDireto: boolean) {
+    if (modo !== 'orcamento') return
+    if (itens.length === 0) {
+      window.alert('Inclua ao menos um item para imprimir o orçamento.')
+      return
+    }
+    setNumeroDocumentoPreview(gerarNumeroDocumento())
+    setDataEmissaoRecibo(new Date())
+    setImprimirAoAbrirRecibo(imprimirDireto)
+    setReciboPreviewAberto(true)
+  }
 
   function adicionar() {
     if (!produtoSelecionado || qtd < 1) return
@@ -207,10 +281,10 @@ export function PdvLancamento({
       window.alert('Inclua ao menos um item para salvar o orçamento.')
       return
     }
-    const nomeCliente = cliente?.nome?.trim() || clienteNomeFallback?.trim() || null
+    const nomeCliente = clienteAtual?.nome?.trim() || clienteNomeFallbackAtual?.trim() || null
     const saved = upsertOrcamentoRascunho({
       id: rascunhoAtualId ?? undefined,
-      clienteId: cliente?.id ?? null,
+      clienteId: clienteAtual?.id ?? null,
       clienteNome: nomeCliente,
       observacoes: observacoesVenda,
       itens,
@@ -227,11 +301,6 @@ export function PdvLancamento({
       return
     }
     setNumeroDocumento(gerarNumeroDocumento())
-    if (modo === 'orcamento') {
-      setDadosPagamento(null)
-      setDialogImpressao(true)
-      return
-    }
     setPagamentoAberto(true)
   }
 
@@ -245,8 +314,8 @@ export function PdvLancamento({
     appendRegistroVenda({
       emitidoEmIso: new Date().toISOString(),
       numeroDocumento,
-      clienteId: cliente?.id ?? null,
-      clienteNome: cliente?.nome?.trim() || clienteNomeFallback?.trim() || null,
+      clienteId: clienteAtual?.id ?? null,
+      clienteNome: clienteAtual?.nome?.trim() || clienteNomeFallbackAtual?.trim() || null,
       vendedorNome: 'Administrador',
       observacoes: observacoesVenda.trim() ? observacoesVenda.trim() : undefined,
       itens: itensParaHistorico(itens, (pid) => {
@@ -274,27 +343,13 @@ export function PdvLancamento({
       removeOrcamentoRascunho(rascunhoAtualId)
       setRascunhoAtualId(null)
     }
-    if (modo === 'orcamento' && itens.length > 0) {
-      const total = Math.round(itens.reduce((s, i) => s + i.subtotal, 0) * 100) / 100
-      appendRegistroOrcamento({
-        emitidoEmIso: dataEmissaoRecibo.toISOString(),
-        numeroDocumento,
-        clienteId: cliente?.id ?? null,
-        clienteNome: cliente?.nome ?? clienteNomeFallback ?? null,
-        vendedorNome: 'Administrador',
-        observacoes: observacoesVenda.trim() ? observacoesVenda.trim() : undefined,
-        itens: itensParaHistorico(itens, (pid) => {
-          const p = produtos.find((x) => x.id === pid)
-          if (!p) return undefined
-          return { valorCusto: p.valorCusto, tipoProdutoId: p.tipoProdutoId }
-        }),
-        total,
-      })
-    }
     setReciboAberto(false)
     setDadosPagamento(null)
     onSair()
   }
+
+  /** Recibo após pagamento confirmado — sempre cupom de venda (inclusive ao concluir orçamento). */
+  const modoReciboFinal = dadosPagamento ? 'venda' : modo
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--surface)]">
@@ -317,15 +372,166 @@ export function PdvLancamento({
 
       <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4 sm:p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-[var(--text)] mb-3">Informações da venda</h2>
-          <p className="text-sm text-[var(--text)]">
-            <span className="text-[var(--text-muted)]">Cliente:</span>{' '}
-            {nomeClienteExibicao ? (
-              <strong>{nomeClienteExibicao}</strong>
-            ) : (
-              <span className="text-amber-700">Não informado para esta venda.</span>
-            )}
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+            <h2 className="text-sm font-semibold text-[var(--text)]">Informações da venda</h2>
+            {modo === 'orcamento' ? (
+              <button
+                type="button"
+                onClick={() => imprimirOrcamentoAtual(true)}
+                disabled={itens.length === 0}
+                className="rounded-xl border border-[var(--accent)] bg-teal-50/80 px-3 py-2 text-xs font-semibold text-teal-900 hover:bg-teal-100/80 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                Imprimir orçamento
+              </button>
+            ) : null}
+          </div>
+          <div className="space-y-3 mb-3">
+            <div>
+              <label htmlFor="pdv-cli" className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                Cliente
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-start">
+                <div className="flex-1 min-w-0 relative">
+                  <input
+                    id="pdv-cli"
+                    role="combobox"
+                    aria-expanded={clienteDropdownAberto}
+                    aria-controls="pdv-clientes-list"
+                    type="search"
+                    value={clienteBusca}
+                    onChange={(e) => {
+                      setClienteBusca(e.target.value)
+                      setClienteDropdownAberto(true)
+                      setClienteActiveIdx(0)
+                    }}
+                    onFocus={() => setClienteDropdownAberto(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setClienteDropdownAberto(false), 120)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault()
+                        setClienteDropdownAberto(true)
+                        setClienteActiveIdx((i) =>
+                          Math.min(i + 1, Math.max(0, clientesFiltrados.length - 1)),
+                        )
+                        return
+                      }
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        setClienteDropdownAberto(true)
+                        setClienteActiveIdx((i) => Math.max(i - 1, 0))
+                        return
+                      }
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        if (clienteDropdownAberto && clientesFiltrados[clienteActiveIdx]) {
+                          selecionarCliente(clientesFiltrados[clienteActiveIdx])
+                          return
+                        }
+                        aplicarNomeAvulso()
+                        return
+                      }
+                      if (e.key === 'Escape') setClienteDropdownAberto(false)
+                    }}
+                    placeholder="Busque por nome, CPF/CNPJ, código ou telefone…"
+                    className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-sm"
+                    autoComplete="off"
+                  />
+                  {clienteDropdownAberto ? (
+                    <div
+                      id="pdv-clientes-list"
+                      role="listbox"
+                      className="absolute z-20 mt-1 w-full overflow-auto max-h-56 rounded-xl border border-[var(--border)] bg-white shadow-lg"
+                    >
+                      {clientesFiltrados.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-[var(--text-muted)]">
+                          Nenhum cliente encontrado. Enter para usar o texto digitado.
+                        </div>
+                      ) : (
+                        clientesFiltrados.map((c, idx) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            role="option"
+                            aria-selected={idx === clienteActiveIdx}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => selecionarCliente(c)}
+                            onMouseEnter={() => setClienteActiveIdx(idx)}
+                            className={`w-full text-left px-3 py-2 text-sm border-b border-[var(--border)]/60 last:border-b-0 ${
+                              idx === clienteActiveIdx ? 'bg-[var(--surface)]' : 'bg-white'
+                            }`}
+                          >
+                            <div className="font-medium text-[var(--text)]">{c.nome}</div>
+                            <div className="text-[11px] text-[var(--text-muted)]">
+                              {c.codigo ? `Cód. ${c.codigo}` : ''}
+                              {c.cpfCnpj ? ` · ${c.cpfCnpj}` : ''}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={usarClienteBalcao}
+                    className="rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-xs font-medium hover:bg-[var(--surface)] whitespace-nowrap"
+                  >
+                    Balcão
+                  </button>
+                  <button
+                    type="button"
+                    onClick={aplicarNomeAvulso}
+                    className="rounded-xl border border-[var(--border)] bg-white px-3 py-2.5 text-xs font-medium hover:bg-[var(--surface)] whitespace-nowrap"
+                  >
+                    Usar nome digitado
+                  </button>
+                  {(clienteAtual || clienteNomeFallbackAtual) && (
+                    <button
+                      type="button"
+                      onClick={limparCliente}
+                      className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-medium text-red-800 whitespace-nowrap"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+              </div>
+              <fieldset className="mt-2">
+                <legend className="sr-only">Filtrar busca de cliente por</legend>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                  {(
+                    [
+                      ['nome', 'Nome'],
+                      ['cpfCnpj', 'CPF/CNPJ'],
+                      ['codigo', 'Código'],
+                      ['telefone', 'Telefone'],
+                    ] as const
+                  ).map(([val, lab]) => (
+                    <label key={val} className="inline-flex items-center gap-1.5 cursor-pointer text-[var(--text-muted)]">
+                      <input
+                        type="radio"
+                        name="pdv-modo-busca-cli"
+                        checked={clienteModoBusca === val}
+                        onChange={() => setClienteModoBusca(val)}
+                      />
+                      {lab}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            </div>
+            <p className="text-sm text-[var(--text)]">
+              <span className="text-[var(--text-muted)]">Selecionado:</span>{' '}
+              {nomeClienteExibicao ? (
+                <strong>{nomeClienteExibicao}</strong>
+              ) : (
+                <span className="text-amber-700">Não informado — busque acima ou use Balcão.</span>
+              )}
+            </p>
+          </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-muted)]">
             <span>Data: {dataStr}</span>
             <span>Controle: {controleId}</span>
@@ -682,21 +888,31 @@ export function PdvLancamento({
           </div>
           <div className="flex flex-wrap gap-2 justify-end">
             {modo === 'orcamento' ? (
-              <button
-                type="button"
-                onClick={salvarRascunhoOrcamento}
-                disabled={itens.length === 0}
-                className="rounded-xl border border-[var(--accent)] bg-teal-50/80 px-5 py-3 text-sm font-semibold text-teal-900 hover:bg-teal-100/80 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Salvar orçamento
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => imprimirOrcamentoAtual(false)}
+                  disabled={itens.length === 0}
+                  className="rounded-xl border border-[var(--border)] bg-white px-5 py-3 text-sm font-semibold text-[var(--text)] hover:bg-[var(--surface)] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Visualizar / imprimir
+                </button>
+                <button
+                  type="button"
+                  onClick={salvarRascunhoOrcamento}
+                  disabled={itens.length === 0}
+                  className="rounded-xl border border-[var(--accent)] bg-teal-50/80 px-5 py-3 text-sm font-semibold text-teal-900 hover:bg-teal-100/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Salvar orçamento
+                </button>
+              </>
             ) : null}
             <button
               type="button"
               onClick={iniciarConclusao}
               className="rounded-xl bg-[var(--accent)] px-6 py-3 text-sm font-bold text-white hover:bg-[var(--accent-hover)]"
             >
-              Concluir lançamento
+              {modo === 'orcamento' ? 'Concluir e receber pagamento' : 'Concluir lançamento'}
             </button>
           </div>
         </div>
@@ -718,7 +934,7 @@ export function PdvLancamento({
           >
             <h3 className="text-base font-semibold text-[var(--text)]">Impressão do recibo</h3>
             <p className="mt-3 text-sm text-[var(--text)]">
-              Deseja imprimir o recibo da {modo === 'orcamento' ? 'proposta' : 'venda'}{' '}
+              Deseja imprimir o recibo da venda{' '}
               <span className="font-mono font-medium">[{numeroDocumento}]</span>?
             </p>
             <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -744,13 +960,28 @@ export function PdvLancamento({
         </div>
       )}
 
+      {reciboPreviewAberto && (
+        <ReciboVenda
+          modo="orcamento"
+          numero={numeroDocumentoPreview}
+          emissao={dataEmissaoRecibo}
+          cliente={clienteAtual}
+          clienteNomeFallback={clienteAtual ? undefined : nomeClienteExibicao || undefined}
+          itens={itens}
+          dadosPagamento={null}
+          observacoes={observacoesVenda}
+          imprimirAoAbrir={imprimirAoAbrirRecibo}
+          onFechar={() => setReciboPreviewAberto(false)}
+        />
+      )}
+
       {reciboAberto && (
         <ReciboVenda
-          modo={modo}
+          modo={modoReciboFinal}
           numero={numeroDocumento}
           emissao={dataEmissaoRecibo}
-          cliente={cliente}
-          clienteNomeFallback={cliente ? undefined : nomeClienteExibicao || undefined}
+          cliente={clienteAtual}
+          clienteNomeFallback={clienteAtual ? undefined : nomeClienteExibicao || undefined}
           itens={itens}
           dadosPagamento={dadosPagamento}
           observacoes={observacoesVenda}
